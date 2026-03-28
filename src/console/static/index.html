@@ -1,0 +1,1859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC/Bybit Trading Console</title>
+<style>
+/* ─── Reset & Variables ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface2: #1c2128;
+  --border: #30363d;
+  --border2: #21262d;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --text3: #6e7681;
+  --blue: #1f6feb;
+  --blue-light: #388bfd;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --orange: #db6d28;
+  --purple: #8957e5;
+  --cyan: #39d353;
+  --accent: #1f6feb;
+  --nav-width: 180px;
+  --header-height: 48px;
+  --font: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+#header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--header-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 16px;
+  z-index: 100;
+}
+
+#header .logo {
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+#header .logo span { color: var(--blue-light); }
+
+.hstat {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 10px;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+}
+.hstat .label { color: var(--text3); }
+.hstat .value { color: var(--text); font-family: var(--font); font-weight: 600; }
+.hstat .value.pos { color: var(--green); }
+.hstat .value.neg { color: var(--red); }
+.hstat .value.warn { color: var(--yellow); }
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block;
+}
+.dot-green { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.dot-yellow { background: var(--yellow); }
+.dot-red { background: var(--red); }
+.dot-gray { background: var(--text3); }
+
+#header .spacer { flex: 1; }
+#header .ws-status { font-size: 11px; color: var(--text3); }
+#header .ws-status.connected { color: var(--green); }
+
+/* ─── Layout ─────────────────────────────────────────────────────────────── */
+#layout {
+  display: flex;
+  height: 100vh;
+  padding-top: var(--header-height);
+}
+
+/* ─── Nav Sidebar ─────────────────────────────────────────────────────────── */
+#nav {
+  width: var(--nav-width);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  flex-shrink: 0;
+  padding: 8px 0;
+}
+
+.nav-group { margin-bottom: 4px; }
+.nav-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+  padding: 8px 12px 4px;
+}
+
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text2);
+  transition: background 0.1s, color 0.1s;
+  font-size: 13px;
+  border-left: 2px solid transparent;
+}
+.nav-item:hover { background: var(--surface2); color: var(--text); }
+.nav-item.active {
+  background: rgba(31,111,235,0.15);
+  color: var(--blue-light);
+  border-left-color: var(--blue-light);
+}
+.nav-item .icon { font-size: 14px; width: 16px; text-align: center; }
+
+/* ─── Main Content ────────────────────────────────────────────────────────── */
+#main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.section { display: none; }
+.section.active { display: block; }
+
+/* ─── Cards ──────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text3);
+  margin-bottom: 10px;
+}
+
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+/* ─── Stat Boxes ─────────────────────────────────────────────────────────── */
+.stat-box {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.stat-box .label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+.stat-box .value {
+  font-family: var(--font);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+.stat-box .sub { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  white-space: nowrap;
+}
+td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  white-space: nowrap;
+}
+tr:hover td { background: var(--surface2); }
+td.muted { color: var(--text3); }
+td.green { color: var(--green); }
+td.red { color: var(--red); }
+td.yellow { color: var(--yellow); }
+td.blue { color: var(--blue-light); }
+
+/* ─── Badges ─────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.badge-green { background: rgba(63,185,80,0.18); color: var(--green); }
+.badge-red { background: rgba(248,81,73,0.18); color: var(--red); }
+.badge-yellow { background: rgba(210,153,34,0.18); color: var(--yellow); }
+.badge-blue { background: rgba(31,111,235,0.18); color: var(--blue-light); }
+.badge-gray { background: rgba(110,118,129,0.18); color: var(--text3); }
+.badge-purple { background: rgba(137,87,229,0.18); color: var(--purple); }
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  background: var(--surface2);
+  color: var(--text);
+}
+.btn:hover { border-color: var(--text3); background: var(--surface); }
+.btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn-primary:hover { background: var(--blue-light); border-color: var(--blue-light); }
+.btn-danger { background: rgba(248,81,73,0.12); border-color: var(--red); color: var(--red); }
+.btn-danger:hover { background: rgba(248,81,73,0.25); }
+.btn-success { background: rgba(63,185,80,0.12); border-color: var(--green); color: var(--green); }
+.btn-sm { padding: 3px 8px; font-size: 11px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── Log Stream ─────────────────────────────────────────────────────────── */
+#log-stream {
+  background: #0a0e13;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: calc(100vh - 160px);
+  overflow-y: auto;
+  font-family: var(--font);
+  font-size: 11.5px;
+  padding: 8px 0;
+}
+.log-line {
+  display: flex; gap: 8px;
+  padding: 2px 12px;
+  line-height: 1.6;
+  border-bottom: 1px solid transparent;
+}
+.log-line:hover { background: rgba(255,255,255,0.03); }
+.log-ts { color: var(--text3); white-space: nowrap; min-width: 80px; }
+.log-level { min-width: 40px; font-weight: 700; text-align: center; }
+.log-level.DEBUG { color: var(--text3); }
+.log-level.INFO { color: var(--blue-light); }
+.log-level.WARNING { color: var(--yellow); }
+.log-level.ERROR { color: var(--red); }
+.log-level.CRITICAL { color: var(--red); background: rgba(248,81,73,0.2); }
+.log-name { color: var(--text3); min-width: 120px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.log-msg { color: var(--text); word-break: break-word; white-space: pre-wrap; flex: 1; }
+
+/* ─── Event badges in stream ─────────────────────────────────────────────── */
+.event-line {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border2);
+}
+.event-line:hover { background: rgba(255,255,255,0.03); }
+.event-ts { color: var(--text3); font-size: 11px; white-space: nowrap; min-width: 80px; }
+.event-type-badge { min-width: 200px; }
+.event-detail { color: var(--text2); font-size: 11px; flex: 1; word-break: break-all; }
+.event-detail pre { white-space: pre-wrap; font-size: 11px; color: var(--text2); }
+
+/* ─── Panel Grid ─────────────────────────────────────────────────────────── */
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.trader-card {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 8px;
+  text-align: center;
+}
+.trader-card .name { font-size: 10px; color: var(--text3); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trader-card .score { font-family: var(--font); font-size: 20px; font-weight: 700; }
+.trader-card .vote { font-size: 10px; font-weight: 700; margin-top: 2px; }
+.trader-card.approve { border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.06); }
+.trader-card.reject { border-color: rgba(248,81,73,0.4); background: rgba(248,81,73,0.06); }
+.trader-card.abstain { border-color: rgba(210,153,34,0.3); }
+.score-bar { height: 3px; border-radius: 2px; margin-top: 4px; background: var(--border); }
+.score-fill { height: 100%; border-radius: 2px; }
+
+/* ─── Group Status Cards ─────────────────────────────────────────────────── */
+.group-card {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.group-card .g-name { font-weight: 600; font-size: 13px; }
+.group-card .g-status { font-size: 11px; }
+.group-card .g-note { font-size: 11px; color: var(--text3); }
+.group-card.active { border-color: rgba(63,185,80,0.3); }
+.group-card.excluded { border-color: rgba(110,118,129,0.3); opacity: 0.6; }
+.group-card.error { border-color: rgba(248,81,73,0.4); }
+
+/* ─── Controls Row ───────────────────────────────────────────────────────── */
+.controls {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* ─── Progress Bar ────────────────────────────────────────────────────────── */
+.progress-wrap { background: var(--border2); border-radius: 3px; height: 6px; }
+.progress-bar { height: 100%; border-radius: 3px; background: var(--blue); transition: width 0.3s; }
+
+/* ─── Tabs ───────────────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.tab-btn {
+  padding: 7px 16px;
+  border: none; background: none;
+  color: var(--text3); cursor: pointer;
+  font-size: 13px; font-family: inherit;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--blue-light); border-bottom-color: var(--blue-light); }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ─── Input / Select ─────────────────────────────────────────────────────── */
+input, select, textarea {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+}
+input:focus, select:focus { outline: none; border-color: var(--blue); }
+input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--blue); }
+
+/* ─── Alert Banner ───────────────────────────────────────────────────────── */
+.alert-banner {
+  padding: 8px 14px;
+  border-radius: 5px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.alert-info { background: rgba(31,111,235,0.12); border: 1px solid rgba(31,111,235,0.3); color: var(--blue-light); }
+.alert-warn { background: rgba(210,153,34,0.12); border: 1px solid rgba(210,153,34,0.3); color: var(--yellow); }
+.alert-danger { background: rgba(248,81,73,0.12); border: 1px solid rgba(248,81,73,0.3); color: var(--red); }
+.alert-success { background: rgba(63,185,80,0.12); border: 1px solid rgba(63,185,80,0.3); color: var(--green); }
+
+/* ─── Code block ─────────────────────────────────────────────────────────── */
+pre.code-block {
+  background: #0a0e13;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 12px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text2);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+/* ─── JSON viewer ────────────────────────────────────────────────────────── */
+.json-null { color: var(--text3); }
+.json-bool { color: var(--blue-light); }
+.json-num { color: var(--green); }
+.json-str { color: var(--yellow); }
+.json-key { color: var(--text2); }
+
+/* ─── Section header ─────────────────────────────────────────────────────── */
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.section-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
+
+/* ─── Pipeline trace ─────────────────────────────────────────────────────── */
+.pipeline-stage {
+  display: flex; align-items: stretch; gap: 0;
+  margin-bottom: 8px;
+}
+.stage-arrow { color: var(--text3); padding: 0 8px; align-self: center; }
+.stage-box {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.stage-box .s-title { font-weight: 700; font-size: 11px; color: var(--text3); text-transform: uppercase; margin-bottom: 4px; }
+.stage-box .s-result { font-family: var(--font); }
+</style>
+</head>
+<body>
+
+<!-- ─── Header ─────────────────────────────────────────────────── -->
+<div id="header">
+  <div class="logo">₿ <span>BTC</span>/Bybit Console</div>
+
+  <div class="hstat">
+    <span class="label">Status</span>
+    <span class="status-dot dot-gray" id="hd-runner-dot"></span>
+    <span class="value" id="hd-runner-mode">stopped</span>
+  </div>
+  <div class="hstat">
+    <span class="label">Equity</span>
+    <span class="value" id="hd-equity">—</span>
+  </div>
+  <div class="hstat">
+    <span class="label">Positions</span>
+    <span class="value" id="hd-positions">0</span>
+  </div>
+  <div class="hstat">
+    <span class="label">Daily P&L</span>
+    <span class="value" id="hd-pnl">—</span>
+  </div>
+  <div class="hstat">
+    <span class="label">Phase</span>
+    <span class="value" id="hd-phase" style="color:var(--purple)">6</span>
+  </div>
+
+  <div class="spacer"></div>
+  <div class="ws-status" id="ws-status">⬤ WS disconnected</div>
+</div>
+
+<!-- ─── Layout ─────────────────────────────────────────────────── -->
+<div id="layout">
+
+  <!-- Nav -->
+  <nav id="nav">
+    <div class="nav-group">
+      <div class="nav-group-label">Monitor</div>
+      <div class="nav-item active" onclick="showSection('overview')" id="nav-overview">
+        <span class="icon">◈</span> Overview
+      </div>
+      <div class="nav-item" onclick="showSection('events')" id="nav-events">
+        <span class="icon">⚡</span> Live Events
+      </div>
+      <div class="nav-item" onclick="showSection('pipeline')" id="nav-pipeline">
+        <span class="icon">⇒</span> Pipeline Trace
+      </div>
+      <div class="nav-item" onclick="showSection('groups')" id="nav-groups">
+        <span class="icon">⧉</span> Groups
+      </div>
+      <div class="nav-item" onclick="showSection('panel')" id="nav-panel">
+        <span class="icon">☷</span> Panel
+      </div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">Run</div>
+      <div class="nav-item" onclick="showSection('replay')" id="nav-replay">
+        <span class="icon">↺</span> Replay
+      </div>
+      <div class="nav-item" onclick="showSection('tests')" id="nav-tests">
+        <span class="icon">✓</span> Tests
+      </div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">Data</div>
+      <div class="nav-item" onclick="showSection('journal')" id="nav-journal">
+        <span class="icon">⊞</span> Journal
+      </div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">Control</div>
+      <div class="nav-item" onclick="showSection('actions')" id="nav-actions">
+        <span class="icon">⚙</span> Actions
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main id="main">
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Overview                                          -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section active" id="section-overview">
+      <div class="section-header">
+        <div>
+          <div class="section-title">System Overview</div>
+          <div class="section-sub">Live state from runtime and journal.</div>
+        </div>
+        <button class="btn btn-sm" onclick="refreshAll()">↻ Refresh</button>
+      </div>
+
+      <!-- Runner status + system health -->
+      <div class="grid4" style="margin-bottom:12px">
+        <div class="stat-box">
+          <div class="label">Runner Mode</div>
+          <div class="value" id="ov-mode" style="font-size:14px">stopped</div>
+          <div class="sub" id="ov-started">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Equity</div>
+          <div class="value" id="ov-equity">$100,000</div>
+          <div class="sub" id="ov-hwm">HWM: —</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Open Positions</div>
+          <div class="value" id="ov-open-pos">0</div>
+          <div class="sub" id="ov-total-trades">Total trades: 0</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Daily P&L</div>
+          <div class="value" id="ov-daily-pnl">—</div>
+          <div class="sub" id="ov-drawdown">Drawdown: —</div>
+        </div>
+      </div>
+
+      <div class="grid3" style="margin-bottom:12px">
+        <div class="card">
+          <div class="card-title">Regime</div>
+          <table style="font-size:12px">
+            <tr><td class="muted">BTC Macro</td><td id="ov-macro">—</td></tr>
+            <tr><td class="muted">Trending</td><td id="ov-trending">—</td></tr>
+            <tr><td class="muted">Volatility</td><td id="ov-vol">—</td></tr>
+            <tr><td class="muted">ADX14</td><td id="ov-adx">—</td></tr>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-title">Risk State</div>
+          <table style="font-size:12px">
+            <tr><td class="muted">Halted</td><td id="ov-halted">No</td></tr>
+            <tr><td class="muted">Halt Reason</td><td id="ov-halt-reason">—</td></tr>
+            <tr><td class="muted">Size Reduction</td><td id="ov-size-red">1.0×</td></tr>
+            <tr><td class="muted">Consec. Losses</td><td id="ov-consec">0</td></tr>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-title">Journal Stats</div>
+          <table style="font-size:12px" id="ov-journal-stats">
+            <tr><td class="muted">Total Trades</td><td id="ov-j-trades">—</td></tr>
+            <tr><td class="muted">Open</td><td id="ov-j-open">—</td></tr>
+            <tr><td class="muted">Wins / Losses</td><td id="ov-j-wl">—</td></tr>
+            <tr><td class="muted">Signals</td><td id="ov-j-signals">—</td></tr>
+            <tr><td class="muted">Panel Reviews</td><td id="ov-j-panels">—</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Active groups mini grid -->
+      <div class="card">
+        <div class="card-title">Groups Status</div>
+        <div class="grid4" id="ov-groups-grid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Architecture note -->
+      <div class="alert-info">
+        <strong>Phase 6 Architecture:</strong>
+        Active: MarketData · Indicators · Candlestick · TechnicalStructure · Entry · PanelDecision · RiskLeverage · Exit · PerformanceJournal.
+        Excluded: ChartPatternGroup · NewsMacroGroup · HistorianAgent · CriticAgent.
+        Panel policy: 14/20 approve + avg ≥ 6.5 → ENTER.
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Live Events                                       -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-events">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Live Event Stream</div>
+          <div class="section-sub" id="ev-count">0 events buffered</div>
+        </div>
+        <div class="controls" style="margin:0">
+          <button class="btn btn-sm" id="btn-pause-events" onclick="toggleEventPause()">⏸ Pause</button>
+          <button class="btn btn-sm" onclick="clearEventDisplay()">✕ Clear View</button>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="controls">
+        <span style="color:var(--text3);font-size:12px">Filter:</span>
+        <button class="btn btn-sm" onclick="setEventFilter('')">All</button>
+        <button class="btn btn-sm" onclick="setEventFilter('CandidateTradeEvent')">Proposals</button>
+        <button class="btn btn-sm" onclick="setEventFilter('PanelApprovedProposalEvent')">Panel Approved</button>
+        <button class="btn btn-sm" onclick="setEventFilter('RiskDecisionEvent')">Risk</button>
+        <button class="btn btn-sm" onclick="setEventFilter('PositionOpenEvent')">Positions</button>
+        <button class="btn btn-sm" onclick="setEventFilter('ConsoleLogEvent')">Logs</button>
+        <input type="text" id="ev-search" placeholder="search..." style="width:140px" oninput="filterEvents()">
+      </div>
+
+      <div id="log-stream"></div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Pipeline Trace                                    -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-pipeline">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Pipeline Trace</div>
+          <div class="section-sub">Inspect individual proposal → panel → risk → open/close.</div>
+        </div>
+        <button class="btn btn-sm" onclick="loadPipelineList()">↻ Refresh</button>
+      </div>
+
+      <div class="grid2">
+        <!-- Left: packet list -->
+        <div class="card" style="height:calc(100vh - 200px); overflow-y:auto">
+          <div class="card-title">Setup Packets <span id="pipe-count" class="badge badge-blue"></span></div>
+          <div id="pipe-list">
+            <div style="color:var(--text3);font-size:12px;padding:8px">No data. Run replay or start runner.</div>
+          </div>
+        </div>
+        <!-- Right: detail -->
+        <div id="pipe-detail">
+          <div class="card" style="color:var(--text3);font-size:12px;padding:24px;text-align:center">
+            Select a setup packet from the left to inspect the full pipeline trace.
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Groups Monitor                                    -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-groups">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Groups Monitor</div>
+          <div class="section-sub">Status of all pipeline components.</div>
+        </div>
+        <button class="btn btn-sm" onclick="loadGroups()">↻ Refresh</button>
+      </div>
+
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">Active Groups (Phase 3)</div>
+        <div class="grid3" id="groups-active-grid"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Excluded Groups</div>
+        <div class="grid3" id="groups-excluded-grid"></div>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Panel Inspector                                   -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-panel">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Panel Inspector</div>
+          <div class="section-sub">20-trader evaluator panel. APPROVE_THRESHOLD=14, MIN_AVG_SCORE=6.5.</div>
+        </div>
+        <button class="btn btn-sm" onclick="loadPanelData()">↻ Refresh</button>
+      </div>
+
+      <!-- Last panel summary -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">Last Panel Decision</div>
+        <div id="panel-last-summary" style="color:var(--text3);font-size:12px">No panel data yet. Run replay to generate.</div>
+      </div>
+
+      <!-- Trader grid -->
+      <div class="card">
+        <div class="card-title">Trader Verdicts <span id="panel-packet-id" class="badge badge-gray"></span></div>
+        <div class="panel-grid" id="panel-trader-grid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Recent panel history -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">Recent Panel Decisions</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Packet ID</th><th>Symbol</th><th>Decision</th><th>Approvals</th><th>Avg Score</th><th>At</th>
+              </tr>
+            </thead>
+            <tbody id="panel-history-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Replay Control                                    -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-replay">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Replay Control</div>
+          <div class="section-sub">Run deterministic replay fixtures through the real pipeline.</div>
+        </div>
+      </div>
+
+      <div class="alert-info" style="margin-bottom:12px">
+        <strong>Note:</strong> Replay runs use the real runtime pipeline (no forced approvals, no fake data).
+        The TrueReplayHarness uses deterministic fixture bars with real indicator computation.
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-title">Start Replay</div>
+          <div style="margin-bottom:10px">
+            <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Fixture</label>
+            <select id="replay-fixture-select" style="width:100%"></select>
+          </div>
+          <div style="margin-bottom:10px">
+            <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Harness Type</label>
+            <select id="replay-harness-select" style="width:100%">
+              <option value="true_replay">TrueReplayHarness (deterministic fixtures)</option>
+              <option value="simulation">RuntimeReplayHarness (simulation)</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="startReplay()">▶ Start Replay</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Active Run</div>
+          <div id="replay-status" style="color:var(--text3);font-size:12px">No replay running.</div>
+        </div>
+      </div>
+
+      <!-- Replay results history -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">Replay History</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Run ID</th><th>Fixture</th><th>Harness</th><th>Status</th>
+                <th>Bars</th><th>Proposals</th><th>Approvals</th><th>Opens</th><th>Summary</th>
+              </tr>
+            </thead>
+            <tbody id="replay-history-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Test Runner                                       -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-tests">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Test Runner</div>
+          <div class="section-sub">Run pytest test suites from the UI.</div>
+        </div>
+      </div>
+
+      <div class="alert-info" style="margin-bottom:12px">
+        <strong>Note:</strong> Tests run as a subprocess using the project's test suite.
+        All 244 tests should pass. Results are shown below.
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-title">Select Tests</div>
+          <div id="test-file-list" style="margin-bottom:10px"></div>
+          <div class="controls">
+            <button class="btn btn-primary" onclick="runSelectedTests()">▶ Run Selected</button>
+            <button class="btn btn-sm" onclick="selectAllTests(true)">All</button>
+            <button class="btn btn-sm" onclick="selectAllTests(false)">None</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Active Run</div>
+          <div id="test-run-status" style="color:var(--text3);font-size:12px">No test running.</div>
+        </div>
+      </div>
+
+      <!-- Output -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">Test Output</div>
+        <pre class="code-block" id="test-output" style="max-height:400px">Run a test to see output here.</pre>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Journal Browser                                   -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-journal">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Journal Browser</div>
+          <div class="section-sub">Browse SQLite journal data.</div>
+        </div>
+        <button class="btn btn-sm" onclick="refreshJournal()">↻ Refresh</button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" onclick="showJournalTab('trades')">Trades</button>
+        <button class="tab-btn" onclick="showJournalTab('signals')">Signals</button>
+        <button class="tab-btn" onclick="showJournalTab('events')">Events</button>
+        <button class="tab-btn" onclick="showJournalTab('panels')">Panel Summaries</button>
+        <button class="tab-btn" onclick="showJournalTab('decisions')">Final Decisions</button>
+        <button class="tab-btn" onclick="showJournalTab('packets')">Setup Packets</button>
+        <button class="tab-btn" onclick="showJournalTab('calibration')">Calibration</button>
+      </div>
+
+      <!-- Trades -->
+      <div class="tab-pane active" id="jtab-trades">
+        <div class="controls">
+          <select id="jt-outcome-filter" onchange="loadJournalTrades()">
+            <option value="">All outcomes</option>
+            <option value="open">Open</option>
+            <option value="win">Win</option>
+            <option value="loss">Loss</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadJournalTrades()">↻</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Trade ID</th><th>Symbol</th><th>Dir</th><th>Entry</th><th>Stop</th><th>Target</th>
+              <th>Size</th><th>Score</th><th>Outcome</th><th>P&L R</th><th>Opened</th><th>Closed</th>
+            </tr></thead>
+            <tbody id="j-trades-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Signals -->
+      <div class="tab-pane" id="jtab-signals">
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Group</th><th>Symbol</th><th>Type</th><th>Subtype</th><th>Direction</th>
+              <th>Quality</th><th>Hypothesis</th><th>Timestamp</th>
+            </tr></thead>
+            <tbody id="j-signals-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Journal Events -->
+      <div class="tab-pane" id="jtab-events">
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Type</th><th>Source</th><th>Severity</th><th>Timestamp</th><th>Payload</th>
+            </tr></thead>
+            <tbody id="j-events-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel Summaries -->
+      <div class="tab-pane" id="jtab-panels">
+        <div id="j-panels-content" style="color:var(--text3);font-size:12px">Loading...</div>
+      </div>
+
+      <!-- Final Decisions -->
+      <div class="tab-pane" id="jtab-decisions">
+        <div id="j-decisions-content" style="color:var(--text3);font-size:12px">Loading...</div>
+      </div>
+
+      <!-- Setup Packets -->
+      <div class="tab-pane" id="jtab-packets">
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Packet ID</th><th>Symbol</th><th>Timeframe</th><th>Source</th><th>Bar Timestamp</th><th>Trade ID</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="j-packets-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Calibration -->
+      <div class="tab-pane" id="jtab-calibration">
+        <div id="j-calibration-content" style="color:var(--text3);font-size:12px">Loading...</div>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- SECTION: Actions                                           -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-actions">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Actions &amp; Controls</div>
+          <div class="section-sub">Operator controls. Dangerous actions are gated.</div>
+        </div>
+      </div>
+
+      <div class="alert-warn" style="margin-bottom:12px">
+        <strong>⚠ Safety:</strong> This console is for paper trading only.
+        No live exchange orders can be placed from here. All actions affect the local runtime only.
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-title">Runner Control</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Start in simulation mode (no Bybit connectivity needed):</div>
+              <button class="btn btn-success" onclick="startRunner(true)">▶ Start Simulation Runner</button>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Start in live mode (requires Bybit connectivity):</div>
+              <button class="btn" onclick="startRunner(false)">▶ Start Live Runner</button>
+            </div>
+            <div>
+              <button class="btn btn-danger" onclick="stopRunner()">⏹ Stop Runner</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Utilities</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Reconnect to journal DB (e.g. after runner writes):</div>
+              <button class="btn" onclick="refreshJournalConn()">↻ Refresh Journal Connection</button>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Clear the in-memory log buffer (does not affect DB):</div>
+              <button class="btn" onclick="clearLogs()">✕ Clear Log Buffer</button>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Download recent logs as text file:</div>
+              <button class="btn" onclick="exportLogs()">⬇ Export Logs</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action output -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">Action Output</div>
+        <pre class="code-block" id="action-output">No recent actions.</pre>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ─── JavaScript ──────────────────────────────────────────────────────────── -->
+<script>
+// ════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════
+let ws = null;
+let wsReconnectTimer = null;
+let eventsPaused = false;
+let activeEventFilter = '';
+let allEvents = [];
+let currentTestRunId = null;
+let currentReplayRunId = null;
+let testPollTimer = null;
+let replayPollTimer = null;
+
+// ════════════════════════════════════════════════════════════
+// Navigation
+// ════════════════════════════════════════════════════════════
+function showSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+
+  // Lazy-load data for sections
+  if (name === 'overview') refreshAll();
+  if (name === 'groups') loadGroups();
+  if (name === 'panel') loadPanelData();
+  if (name === 'replay') loadReplayFixtures();
+  if (name === 'tests') loadTestFiles();
+  if (name === 'journal') refreshJournal();
+  if (name === 'pipeline') loadPipelineList();
+}
+
+// ════════════════════════════════════════════════════════════
+// WebSocket
+// ════════════════════════════════════════════════════════════
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/events`);
+
+  ws.onopen = () => {
+    document.getElementById('ws-status').textContent = '⬤ WS connected';
+    document.getElementById('ws-status').className = 'ws-status connected';
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const event = JSON.parse(ev.data);
+      if (event.event_type === 'Heartbeat') return;
+      allEvents.push(event);
+      if (allEvents.length > 2000) allEvents.shift();
+      if (!eventsPaused) appendEventToStream(event);
+      updateHeaderFromEvent(event);
+    } catch(e) {}
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-status').textContent = '⬤ WS disconnected';
+    document.getElementById('ws-status').className = 'ws-status';
+    wsReconnectTimer = setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+function updateHeaderFromEvent(ev) {
+  if (ev.event_type === 'PositionOpenEvent' || ev.event_type === 'PositionCloseEvent') {
+    setTimeout(fetchState, 500);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// Event stream rendering
+// ════════════════════════════════════════════════════════════
+function eventBadgeClass(type) {
+  const map = {
+    'BarCloseEvent': 'badge-gray',
+    'FeatureReadyEvent': 'badge-gray',
+    'GroupSignalEvent': 'badge-blue',
+    'CandidateTradeEvent': 'badge-purple',
+    'PanelApprovedProposalEvent': 'badge-green',
+    'RiskDecisionEvent': 'badge-yellow',
+    'PositionOpenEvent': 'badge-green',
+    'PositionCloseEvent': 'badge-red',
+    'JournalEntryEvent': 'badge-gray',
+    'SystemAlertEvent': 'badge-yellow',
+    'ConsoleLogEvent': 'badge-gray',
+  };
+  return map[type] || 'badge-gray';
+}
+
+function formatEventDetail(ev) {
+  const type = ev.event_type;
+  if (type === 'ConsoleLogEvent') {
+    const lvl = ev.level || 'INFO';
+    const lvlClass = {DEBUG:'log-level DEBUG',INFO:'log-level INFO',WARNING:'log-level WARNING',ERROR:'log-level ERROR'}[lvl] || '';
+    return `<span class="${lvlClass}" style="margin-right:6px">${lvl}</span><span class="log-name" style="margin-right:8px">${ev.name||''}</span><span>${escHtml(ev.message||'')}</span>`;
+  }
+  if (type === 'CandidateTradeEvent') {
+    const p = ev.proposal || {};
+    return `<strong>${p.direction||'?'}</strong> ${p.symbol||''} @ ${fmt(p.entry_price)} | composite=${fmt(p.composite_score)} | id=${(ev.event_id||'').slice(0,8)}`;
+  }
+  if (type === 'PanelApprovedProposalEvent') {
+    return `<strong class="badge badge-green">APPROVED</strong> ${ev.panel_approve_count}/20 | avg=${fmt(ev.panel_avg_score)} | packet=${(ev.packet_id||'').slice(0,12)}`;
+  }
+  if (type === 'RiskDecisionEvent') {
+    const approved = ev.approved;
+    const badge = approved ? '<span class="badge badge-green">APPROVED</span>' : '<span class="badge badge-red">REJECTED</span>';
+    const rej = ev.rejection;
+    return `${badge} ${rej ? escHtml(String(rej.rejection_code||'')) : ''}`;
+  }
+  if (type === 'PositionOpenEvent') {
+    const pos = ev.position || {};
+    return `<strong class="badge badge-green">OPENED</strong> ${pos.symbol||''} ${pos.direction||''} @ ${fmt(pos.entry_price)} size=$${fmt(pos.position_size_usd)}`;
+  }
+  if (type === 'PositionCloseEvent') {
+    const sig = ev.exit_signal || {};
+    return `<strong class="badge badge-red">CLOSED</strong> pnl_r=${fmt(sig.pnl_r)} reason=${sig.exit_reason||''}`;
+  }
+  if (type === 'GroupSignalEvent') {
+    const b = ev.bundle || {};
+    return `${b.group_id||''} | direction=${b.direction||''} | signals=${(b.signals||[]).length}`;
+  }
+  if (type === 'SystemAlertEvent') {
+    return `<span class="badge badge-yellow">${ev.severity||''}</span> ${escHtml(ev.description||'')}`;
+  }
+  // Generic
+  const keys = Object.keys(ev).filter(k => !['event_type','event_id','timestamp','source'].includes(k));
+  return keys.slice(0,3).map(k => `${k}=${JSON.stringify(ev[k])}`.slice(0,60)).join(' | ');
+}
+
+function appendEventToStream(ev) {
+  const type = ev.event_type;
+  if (activeEventFilter && type !== activeEventFilter) return;
+  const search = document.getElementById('ev-search').value;
+  if (search && !JSON.stringify(ev).toLowerCase().includes(search.toLowerCase())) return;
+
+  const stream = document.getElementById('log-stream');
+  const div = document.createElement('div');
+  div.className = 'event-line';
+  const ts = (ev.timestamp || ev.ts || '').slice(11, 19) || '—';
+  div.innerHTML = `
+    <span class="event-ts">${ts}</span>
+    <span class="event-type-badge"><span class="badge ${eventBadgeClass(type)}">${type.replace('Event','')}</span></span>
+    <span class="event-detail">${formatEventDetail(ev)}</span>
+  `;
+  div.onclick = () => showEventDetail(ev);
+  stream.appendChild(div);
+  // Auto-scroll
+  if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 200) {
+    stream.scrollTop = stream.scrollHeight;
+  }
+  // Update count
+  document.getElementById('ev-count').textContent = `${allEvents.length} events buffered`;
+}
+
+function showEventDetail(ev) {
+  const detail = JSON.stringify(ev, null, 2);
+  const win = window.open('', '_blank', 'width=700,height=600');
+  win.document.write(`<html><body style="background:#0d1117;color:#e6edf3;font-family:monospace;padding:16px;font-size:12px"><pre>${escHtml(detail)}</pre></body></html>`);
+}
+
+function toggleEventPause() {
+  eventsPaused = !eventsPaused;
+  document.getElementById('btn-pause-events').textContent = eventsPaused ? '▶ Resume' : '⏸ Pause';
+}
+
+function clearEventDisplay() {
+  document.getElementById('log-stream').innerHTML = '';
+}
+
+function setEventFilter(f) {
+  activeEventFilter = f;
+  document.getElementById('log-stream').innerHTML = '';
+  allEvents.filter(ev => !f || ev.event_type === f).forEach(appendEventToStream);
+}
+
+function filterEvents() {
+  document.getElementById('log-stream').innerHTML = '';
+  const search = document.getElementById('ev-search').value;
+  allEvents.filter(ev => {
+    if (activeEventFilter && ev.event_type !== activeEventFilter) return false;
+    if (search && !JSON.stringify(ev).toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  }).forEach(appendEventToStream);
+}
+
+// ════════════════════════════════════════════════════════════
+// State / Status polling
+// ════════════════════════════════════════════════════════════
+async function fetchStatus() {
+  try {
+    const data = await api('/api/status');
+    const runner = data.runner || {};
+    const mode = runner.mode || 'stopped';
+    const running = runner.running;
+
+    document.getElementById('hd-runner-mode').textContent = mode;
+    document.getElementById('hd-runner-mode').className = running ? 'value pos' : 'value warn';
+    const dot = document.getElementById('hd-runner-dot');
+    dot.className = 'status-dot ' + (running ? 'dot-green' : 'dot-gray');
+
+    document.getElementById('ov-mode').textContent = mode;
+    document.getElementById('ov-started').textContent = runner.started_at || '—';
+
+    if (runner.error) {
+      document.getElementById('ov-mode').style.color = 'var(--red)';
+    }
+
+    // Groups grid in overview
+    const groupsGrid = document.getElementById('ov-groups-grid');
+    if (groupsGrid && runner.groups) {
+      groupsGrid.innerHTML = runner.groups.slice(0, 12).map(g => `
+        <div class="group-card ${g.status}">
+          <span class="g-name">${g.name.replace('Group','')}</span>
+          <span class="g-status"><span class="badge ${g.status==='active'?'badge-green':g.status==='excluded'?'badge-gray':'badge-red'}">${g.status}</span></span>
+        </div>`).join('');
+    }
+  } catch(e) {}
+}
+
+async function fetchState() {
+  try {
+    const data = await api('/api/state');
+    if (!data.available) return;
+
+    const p = data.portfolio || {};
+    const equity = p.equity || 0;
+    const dailyPnl = p.daily_pnl || 0;
+
+    document.getElementById('hd-equity').textContent = '$' + fmt(equity);
+    document.getElementById('hd-positions').textContent = p.open_positions_count || 0;
+    document.getElementById('hd-pnl').textContent = (dailyPnl >= 0 ? '+' : '') + '$' + fmt(dailyPnl);
+    document.getElementById('hd-pnl').className = 'value ' + (dailyPnl > 0 ? 'pos' : dailyPnl < 0 ? 'neg' : '');
+
+    document.getElementById('ov-equity').textContent = '$' + fmt(equity);
+    document.getElementById('ov-hwm').textContent = 'HWM: $' + fmt(p.high_water_mark);
+    document.getElementById('ov-open-pos').textContent = p.open_positions_count || 0;
+    document.getElementById('ov-total-trades').textContent = 'Total trades: ' + (p.total_trades || 0);
+    document.getElementById('ov-daily-pnl').textContent = (dailyPnl >= 0 ? '+' : '') + '$' + fmt(dailyPnl);
+    document.getElementById('ov-daily-pnl').className = 'value ' + (dailyPnl > 0 ? 'pos' : dailyPnl < 0 ? 'neg' : '');
+    document.getElementById('ov-drawdown').textContent = 'Drawdown: ' + ((p.drawdown_pct||0)*100).toFixed(2) + '%';
+
+    const regime = data.regime || {};
+    document.getElementById('ov-macro').textContent = regime.btc_macro || '—';
+    document.getElementById('ov-trending').textContent = regime.trending ? 'Yes' : 'No';
+    document.getElementById('ov-vol').textContent = regime.volatility_regime || '—';
+    document.getElementById('ov-adx').textContent = fmt(regime.adx14);
+
+    const risk = data.risk || {};
+    document.getElementById('ov-halted').textContent = risk.halted ? 'YES' : 'No';
+    document.getElementById('ov-halted').className = risk.halted ? 'red' : '';
+    document.getElementById('ov-halt-reason').textContent = risk.halt_reason || '—';
+    document.getElementById('ov-size-red').textContent = fmt(risk.size_reduction) + '×';
+    document.getElementById('ov-consec').textContent = p.consecutive_losses || 0;
+
+  } catch(e) {}
+}
+
+async function fetchJournalStats() {
+  try {
+    const data = await api('/api/journal/stats');
+    document.getElementById('ov-j-trades').textContent = data.total_trades || 0;
+    document.getElementById('ov-j-open').textContent = data.open_trades || 0;
+    document.getElementById('ov-j-wl').textContent = (data.wins || 0) + ' / ' + (data.losses || 0);
+    document.getElementById('ov-j-signals').textContent = data.total_signals || 0;
+    document.getElementById('ov-j-panels').textContent = data.total_panel_summaries || 0;
+  } catch(e) {}
+}
+
+async function refreshAll() {
+  await Promise.all([fetchStatus(), fetchState(), fetchJournalStats()]);
+}
+
+// ════════════════════════════════════════════════════════════
+// Groups Monitor
+// ════════════════════════════════════════════════════════════
+async function loadGroups() {
+  try {
+    const data = await api('/api/groups');
+    const groups = data.groups || [];
+    const active = groups.filter(g => g.status === 'active');
+    const excluded = groups.filter(g => g.status !== 'active');
+
+    document.getElementById('groups-active-grid').innerHTML = active.map(g => `
+      <div class="group-card active">
+        <span class="g-name">${g.name}</span>
+        <span class="g-status"><span class="badge badge-green">Active</span></span>
+        <span class="g-note">${g.note}</span>
+      </div>`).join('');
+
+    document.getElementById('groups-excluded-grid').innerHTML = excluded.map(g => `
+      <div class="group-card excluded">
+        <span class="g-name">${g.name}</span>
+        <span class="g-status"><span class="badge badge-gray">Excluded</span></span>
+        <span class="g-note">${g.note}</span>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════════
+// Panel Inspector
+// ════════════════════════════════════════════════════════════
+async function loadPanelData() {
+  // Load recent panel summaries from journal
+  try {
+    const data = await api('/api/journal/panels?limit=10');
+    const panels = data.panels || [];
+
+    if (panels.length === 0) {
+      document.getElementById('panel-last-summary').innerHTML = '<div style="color:var(--text3);font-size:12px">No panel data. Run replay to generate panel decisions.</div>';
+      return;
+    }
+
+    const last = panels[0];
+    renderPanelSummary(last);
+    renderPanelHistory(panels);
+
+    // Load trader reviews for the most recent packet
+    if (last.packet_id) {
+      const reviewData = await api(`/api/journal/reviews?packet_id=${last.packet_id}`);
+      renderTraderGrid(reviewData.reviews || []);
+    }
+  } catch(e) {
+    document.getElementById('panel-last-summary').innerHTML = `<div class="alert-warn">${e.message}</div>`;
+  }
+}
+
+function renderPanelSummary(panel) {
+  const d = document.getElementById('panel-last-summary');
+  const decision = panel.decision || panel.final_decision || '—';
+  const badgeClass = decision === 'enter' ? 'badge-green' : 'badge-red';
+  d.innerHTML = `
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div><span class="label" style="color:var(--text3);font-size:11px">Decision</span><br>
+        <span class="badge ${badgeClass}" style="font-size:13px">${decision.toUpperCase()}</span></div>
+      <div><span class="label" style="color:var(--text3);font-size:11px">Approvals</span><br>
+        <span style="font-family:var(--font);font-size:18px;font-weight:700">${panel.approve_count||0}/20</span></div>
+      <div><span class="label" style="color:var(--text3);font-size:11px">Avg Score</span><br>
+        <span style="font-family:var(--font);font-size:18px;font-weight:700">${fmt(panel.avg_score)}</span></div>
+      <div><span class="label" style="color:var(--text3);font-size:11px">Packet ID</span><br>
+        <span style="font-family:var(--font);font-size:11px;color:var(--text3)">${(panel.packet_id||'—').slice(0,16)}</span></div>
+      <div><span class="label" style="color:var(--text3);font-size:11px">At</span><br>
+        <span style="font-size:12px">${(panel.evaluated_at||'—').slice(0,19)}</span></div>
+    </div>`;
+}
+
+function renderTraderGrid(reviews) {
+  if (!reviews.length) {
+    document.getElementById('panel-trader-grid').innerHTML = '<div style="color:var(--text3);font-size:12px;grid-column:1/-1">No trader reviews found for this packet.</div>';
+    return;
+  }
+  document.getElementById('panel-trader-grid').innerHTML = reviews.map(r => {
+    const score = r.score || 0;
+    const vote = r.vote || 'abstain';
+    const voteClass = vote === 'approve' ? 'approve' : vote === 'reject' ? 'reject' : 'abstain';
+    const voteColor = vote === 'approve' ? 'var(--green)' : vote === 'reject' ? 'var(--red)' : 'var(--yellow)';
+    const fillPct = (score / 10) * 100;
+    const fillColor = score >= 6.5 ? 'var(--green)' : score >= 5 ? 'var(--yellow)' : 'var(--red)';
+    return `
+      <div class="trader-card ${voteClass}" title="${escHtml(r.explanation||'')}">
+        <div class="name">${r.trader_name||'?'}</div>
+        <div class="score" style="color:${voteColor}">${fmt(score)}</div>
+        <div class="vote" style="color:${voteColor}">${vote.toUpperCase()}</div>
+        <div class="score-bar"><div class="score-fill" style="width:${fillPct}%;background:${fillColor}"></div></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">${fmt(r.confidence||0)} conf</div>
+      </div>`;
+  }).join('');
+}
+
+function renderPanelHistory(panels) {
+  document.getElementById('panel-history-rows').innerHTML = panels.map(p => {
+    const decision = p.decision || p.final_decision || '—';
+    const badge = decision === 'enter' ? 'badge-green' : 'badge-red';
+    return `<tr>
+      <td class="blue">${(p.packet_id||'—').slice(0,12)}</td>
+      <td>${p.symbol||'—'}</td>
+      <td><span class="badge ${badge}">${decision}</span></td>
+      <td>${p.approve_count||0}/20</td>
+      <td>${fmt(p.avg_score)}</td>
+      <td class="muted">${(p.evaluated_at||'—').slice(0,19)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// Pipeline Trace
+// ════════════════════════════════════════════════════════════
+async function loadPipelineList() {
+  try {
+    const data = await api('/api/journal/packets?limit=30');
+    const packets = data.packets || [];
+    document.getElementById('pipe-count').textContent = packets.length;
+    if (packets.length === 0) {
+      document.getElementById('pipe-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px">No setup packets. Run replay to generate.</div>';
+      return;
+    }
+    document.getElementById('pipe-list').innerHTML = packets.map(p => `
+      <div onclick="loadPipelineDetail('${p.packet_id}')" style="padding:8px;border-bottom:1px solid var(--border2);cursor:pointer;font-size:12px" class="pipe-item">
+        <div style="font-family:var(--font);color:var(--blue-light)">${(p.packet_id||'').slice(0,14)}…</div>
+        <div style="color:var(--text3)">${p.symbol||''} ${p.timeframe||''} | ${(p.bar_timestamp||'').slice(0,16)}</div>
+        <div><span class="badge badge-gray" style="font-size:10px">${p.outcome_source||''}</span> ${p.trade_id ? '<span class="badge badge-green">traded</span>':''}</div>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+async function loadPipelineDetail(packetId) {
+  try {
+    const data = await api(`/api/journal/packets/${packetId}`);
+    const packet = data.packet || {};
+    const reviews = data.reviews || [];
+
+    const detail = document.getElementById('pipe-detail');
+
+    let proposalHtml = '—';
+    if (packet.packet_json) {
+      try {
+        const pj = typeof packet.packet_json === 'string' ? JSON.parse(packet.packet_json) : packet.packet_json;
+        const sp = pj.setup_proposal || pj.proposal || {};
+        proposalHtml = `<table style="font-size:11px">
+          ${Object.entries(sp).slice(0,10).map(([k,v]) => `<tr><td class="muted" style="padding:2px 6px">${k}</td><td style="padding:2px 6px;font-family:var(--font)">${JSON.stringify(v)}</td></tr>`).join('')}
+        </table>`;
+      } catch(e) { proposalHtml = '<span style="color:var(--red)">Parse error</span>'; }
+    }
+
+    // Trader grid
+    const gridHtml = reviews.length > 0 ? reviews.map(r => {
+      const score = r.score || 0;
+      const vote = r.vote || 'abstain';
+      const voteClass = vote === 'approve' ? 'approve' : vote === 'reject' ? 'reject' : 'abstain';
+      const voteColor = vote === 'approve' ? 'var(--green)' : vote === 'reject' ? 'var(--red)' : 'var(--yellow)';
+      return `<div class="trader-card ${voteClass}" style="min-width:100px">
+        <div class="name" style="font-size:9px">${r.trader_name||'?'}</div>
+        <div class="score" style="color:${voteColor};font-size:16px">${fmt(score)}</div>
+        <div class="vote" style="color:${voteColor};font-size:9px">${vote.toUpperCase()}</div>
+      </div>`;
+    }).join('') : '<div style="color:var(--text3);font-size:12px">No trader reviews.</div>';
+
+    detail.innerHTML = `
+      <div class="card" style="margin-bottom:10px">
+        <div class="card-title">Packet ${packetId.slice(0,14)}</div>
+        <table style="font-size:12px">
+          <tr><td class="muted" style="padding:2px 8px">Symbol</td><td>${packet.symbol||'—'}</td></tr>
+          <tr><td class="muted" style="padding:2px 8px">Timeframe</td><td>${packet.timeframe||'—'}</td></tr>
+          <tr><td class="muted" style="padding:2px 8px">Bar Time</td><td>${packet.bar_timestamp||'—'}</td></tr>
+          <tr><td class="muted" style="padding:2px 8px">Source</td><td><span class="badge badge-blue">${packet.outcome_source||'—'}</span></td></tr>
+          <tr><td class="muted" style="padding:2px 8px">Trade ID</td><td class="blue">${packet.trade_id||'—'}</td></tr>
+        </table>
+      </div>
+      <div class="card" style="margin-bottom:10px">
+        <div class="card-title">Setup Proposal</div>
+        ${proposalHtml}
+      </div>
+      <div class="card">
+        <div class="card-title">Trader Verdicts (${reviews.length})</div>
+        <div class="panel-grid" style="grid-template-columns:repeat(4,1fr)">${gridHtml}</div>
+      </div>`;
+  } catch(e) {
+    document.getElementById('pipe-detail').innerHTML = `<div class="alert-warn">Error: ${e.message}</div>`;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// Replay
+// ════════════════════════════════════════════════════════════
+async function loadReplayFixtures() {
+  try {
+    const data = await api('/api/replay/fixtures');
+    const sel = document.getElementById('replay-fixture-select');
+    sel.innerHTML = (data.fixtures||[]).map(f => `<option value="${f.id}">${f.label}</option>`).join('');
+  } catch(e) {}
+  await loadReplayResults();
+}
+
+async function startReplay() {
+  const fixtureId = document.getElementById('replay-fixture-select').value;
+  const harnessType = document.getElementById('replay-harness-select').value;
+  try {
+    const data = await api('/api/replay/run', 'POST', {fixture_id: fixtureId, harness_type: harnessType});
+    currentReplayRunId = data.run_id;
+    document.getElementById('replay-status').innerHTML = `<div class="badge badge-yellow">Running run_id=${data.run_id}…</div>`;
+    if (replayPollTimer) clearInterval(replayPollTimer);
+    replayPollTimer = setInterval(pollReplay, 1500);
+  } catch(e) {
+    document.getElementById('replay-status').innerHTML = `<div class="alert-danger">${e.message}</div>`;
+  }
+}
+
+async function pollReplay() {
+  if (!currentReplayRunId) return;
+  try {
+    const data = await api(`/api/replay/result/${currentReplayRunId}`);
+    if (data.status === 'done' || data.status === 'error') {
+      clearInterval(replayPollTimer);
+      replayPollTimer = null;
+    }
+    const statusEl = document.getElementById('replay-status');
+    const badgeClass = data.status === 'done' ? 'badge-green' : data.status === 'error' ? 'badge-red' : 'badge-yellow';
+    statusEl.innerHTML = `
+      <div style="margin-bottom:8px"><span class="badge ${badgeClass}">${data.status}</span> run_id=${data.run_id}</div>
+      <table style="font-size:12px">
+        <tr><td class="muted" style="padding:2px 8px">Fixture</td><td>${data.fixture_id}</td></tr>
+        <tr><td class="muted" style="padding:2px 8px">Bars Run</td><td>${data.bars_run}</td></tr>
+        <tr><td class="muted" style="padding:2px 8px">Proposals</td><td>${data.proposals_generated}</td></tr>
+        <tr><td class="muted" style="padding:2px 8px">Panel Approvals</td><td>${data.panel_approvals}</td></tr>
+        <tr><td class="muted" style="padding:2px 8px">Positions Opened</td><td>${data.positions_opened}</td></tr>
+        <tr><td class="muted" style="padding:2px 8px">Errors</td><td class="${data.errors.length?'red':''}">${data.errors.length}</td></tr>
+      </table>
+      ${data.summary ? `<div style="margin-top:8px;font-size:11px;color:var(--text3)">${escHtml(data.summary)}</div>` : ''}
+      ${data.errors.length ? `<div class="alert-warn" style="margin-top:8px;font-size:11px">${data.errors.map(escHtml).join('<br>')}</div>` : ''}`;
+    await loadReplayResults();
+  } catch(e) {}
+}
+
+async function loadReplayResults() {
+  try {
+    const data = await api('/api/replay/results');
+    const rows = (data.results || []).reverse();
+    document.getElementById('replay-history-rows').innerHTML = rows.map(r => {
+      const badge = r.status === 'done' ? 'badge-green' : r.status === 'error' ? 'badge-red' : 'badge-yellow';
+      return `<tr>
+        <td class="blue">${r.run_id}</td>
+        <td>${r.fixture_id}</td>
+        <td><span class="badge badge-gray" style="font-size:10px">${r.harness_type}</span></td>
+        <td><span class="badge ${badge}">${r.status}</span></td>
+        <td>${r.bars_run}</td>
+        <td>${r.proposals_generated}</td>
+        <td>${r.panel_approvals}</td>
+        <td>${r.positions_opened}</td>
+        <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${escHtml(r.summary||'')}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════
+async function loadTestFiles() {
+  try {
+    const data = await api('/api/tests/list');
+    const files = data.files || [];
+    document.getElementById('test-file-list').innerHTML = files.map(f => `
+      <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer">
+        <input type="checkbox" class="test-cb" value="${f.path}" ${f.exists ? 'checked' : 'disabled'}>
+        <span style="color:${f.exists ? 'var(--text)' : 'var(--text3)'}">${f.name}</span>
+        ${!f.exists ? '<span class="badge badge-red" style="font-size:9px">missing</span>' : ''}
+      </label>`).join('');
+  } catch(e) {}
+}
+
+function selectAllTests(val) {
+  document.querySelectorAll('.test-cb:not(:disabled)').forEach(cb => cb.checked = val);
+}
+
+async function runSelectedTests() {
+  const files = Array.from(document.querySelectorAll('.test-cb:checked')).map(cb => cb.value);
+  if (!files.length) {
+    setActionOutput('No test files selected.');
+    return;
+  }
+  try {
+    const data = await api('/api/tests/run', 'POST', {files});
+    currentTestRunId = data.run_id;
+    document.getElementById('test-run-status').innerHTML = `<span class="badge badge-yellow">Running…</span> run_id=${data.run_id}`;
+    document.getElementById('test-output').textContent = 'Running…';
+    if (testPollTimer) clearInterval(testPollTimer);
+    testPollTimer = setInterval(pollTestRun, 1000);
+  } catch(e) {
+    document.getElementById('test-run-status').innerHTML = `<div class="alert-danger">${e.message}</div>`;
+  }
+}
+
+async function pollTestRun() {
+  if (!currentTestRunId) return;
+  try {
+    const data = await api(`/api/tests/result/${currentTestRunId}`);
+    if (data.status === 'done' || data.status === 'error') {
+      clearInterval(testPollTimer);
+      testPollTimer = null;
+    }
+    const badge = data.status === 'done' ? (data.failed ? 'badge-red' : 'badge-green') :
+                  data.status === 'error' ? 'badge-red' : 'badge-yellow';
+    let statusHtml = `<span class="badge ${badge}">${data.status}</span>`;
+    if (data.passed !== null) statusHtml += ` <span class="badge badge-green">${data.passed} passed</span>`;
+    if (data.failed) statusHtml += ` <span class="badge badge-red">${data.failed} failed</span>`;
+    if (data.errors) statusHtml += ` <span class="badge badge-yellow">${data.errors} errors</span>`;
+    if (data.summary) statusHtml += ` <span style="font-size:11px;color:var(--text3)">${escHtml(data.summary)}</span>`;
+    document.getElementById('test-run-status').innerHTML = statusHtml;
+    document.getElementById('test-output').textContent = (data.output_lines || []).join('\n');
+    // Scroll to bottom
+    const out = document.getElementById('test-output');
+    out.scrollTop = out.scrollHeight;
+  } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════════
+// Journal Browser
+// ════════════════════════════════════════════════════════════
+function showJournalTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('jtab-' + name).classList.add('active');
+  event.target.classList.add('active');
+  loadJournalTab(name);
+}
+
+async function loadJournalTab(name) {
+  if (name === 'trades') await loadJournalTrades();
+  if (name === 'signals') await loadJournalSignals();
+  if (name === 'events') await loadJournalEvents();
+  if (name === 'panels') await loadJournalPanels();
+  if (name === 'decisions') await loadJournalDecisions();
+  if (name === 'packets') await loadJournalPackets();
+  if (name === 'calibration') await loadJournalCalibration();
+}
+
+async function refreshJournal() {
+  await loadJournalTrades();
+}
+
+async function loadJournalTrades() {
+  const outcome = document.getElementById('jt-outcome-filter').value;
+  const url = '/api/journal/trades?limit=100' + (outcome ? '&outcome=' + outcome : '');
+  try {
+    const data = await api(url);
+    const trades = data.trades || [];
+    document.getElementById('j-trades-rows').innerHTML = trades.length === 0
+      ? '<tr><td colspan="12" class="muted" style="text-align:center;padding:16px">No trades in journal yet.</td></tr>'
+      : trades.map(t => {
+          const outcome = t.outcome || 'open';
+          const badge = outcome === 'win' ? 'badge-green' : outcome === 'loss' ? 'badge-red' : outcome === 'open' ? 'badge-blue' : 'badge-gray';
+          return `<tr>
+            <td class="blue" style="font-size:11px">${(t.trade_id||'').slice(0,12)}</td>
+            <td>${t.symbol||'—'}</td>
+            <td><span class="badge ${t.direction==='SHORT'?'badge-red':'badge-green'}">${t.direction||'?'}</span></td>
+            <td>${fmt(t.entry_price)}</td>
+            <td>${fmt(t.stop_price)}</td>
+            <td>${fmt(t.target_price)}</td>
+            <td>$${fmt(t.position_size_usd)}</td>
+            <td>${fmt(t.composite_score)}</td>
+            <td><span class="badge ${badge}">${outcome}</span></td>
+            <td class="${t.pnl_r>0?'green':t.pnl_r<0?'red':''}">${t.pnl_r!==null?fmt(t.pnl_r)+'R':'—'}</td>
+            <td class="muted">${(t.opened_at||'—').slice(0,16)}</td>
+            <td class="muted">${(t.closed_at||'—').slice(0,16)}</td>
+          </tr>`;
+        }).join('');
+  } catch(e) {
+    document.getElementById('j-trades-rows').innerHTML = `<tr><td colspan="12"><div class="alert-warn">${e.message}</div></td></tr>`;
+  }
+}
+
+async function loadJournalSignals() {
+  try {
+    const data = await api('/api/journal/signals?limit=100');
+    const sigs = data.signals || [];
+    document.getElementById('j-signals-rows').innerHTML = sigs.length === 0
+      ? '<tr><td colspan="8" class="muted" style="text-align:center;padding:16px">No signals in journal yet.</td></tr>'
+      : sigs.map(s => `<tr>
+          <td class="blue">${s.group_id||'—'}</td>
+          <td>${s.symbol||'—'}</td>
+          <td>${s.signal_type||'—'}</td>
+          <td class="muted">${s.signal_subtype||'—'}</td>
+          <td><span class="badge ${s.direction==='SHORT'?'badge-red':'badge-green'}">${s.direction||'?'}</span></td>
+          <td>${fmt(s.quality_score)}</td>
+          <td class="muted">${(s.hypothesis_ref||'—').slice(0,20)}</td>
+          <td class="muted">${(s.timestamp||'—').slice(0,16)}</td>
+        </tr>`).join('');
+  } catch(e) {}
+}
+
+async function loadJournalEvents() {
+  try {
+    const data = await api('/api/journal/events?limit=100');
+    const evs = data.events || [];
+    document.getElementById('j-events-rows').innerHTML = evs.length === 0
+      ? '<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">No journal events yet.</td></tr>'
+      : evs.map(e => {
+          const sev = e.severity || '';
+          const badge = sev === 'critical' ? 'badge-red' : sev === 'warning' ? 'badge-yellow' : 'badge-gray';
+          const payloadStr = typeof e.payload === 'object' ? JSON.stringify(e.payload).slice(0,80) : String(e.payload||'').slice(0,80);
+          return `<tr>
+            <td class="blue">${e.event_type||'—'}</td>
+            <td class="muted">${e.source||'—'}</td>
+            <td>${sev ? `<span class="badge ${badge}">${sev}</span>` : '—'}</td>
+            <td class="muted">${(e.timestamp||'—').slice(0,16)}</td>
+            <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;font-size:11px">${escHtml(payloadStr)}</td>
+          </tr>`;
+        }).join('');
+  } catch(e) {}
+}
+
+async function loadJournalPanels() {
+  try {
+    const data = await api('/api/journal/panels?limit=20');
+    const panels = data.panels || [];
+    if (panels.length === 0) {
+      document.getElementById('j-panels-content').textContent = 'No panel summaries yet. Run replay.';
+      return;
+    }
+    document.getElementById('j-panels-content').innerHTML = `
+      <div class="table-wrap"><table>
+        <thead><tr><th>Packet ID</th><th>Symbol</th><th>Decision</th><th>Approvals</th><th>Avg Score</th><th>At</th></tr></thead>
+        <tbody>${panels.map(p => {
+          const d = p.decision || p.final_decision || '—';
+          return `<tr>
+            <td class="blue" onclick="loadPipelineDetail('${p.packet_id}')" style="cursor:pointer">${(p.packet_id||'').slice(0,14)}</td>
+            <td>${p.symbol||'—'}</td>
+            <td><span class="badge ${d==='enter'?'badge-green':'badge-red'}">${d}</span></td>
+            <td>${p.approve_count||0}/20</td>
+            <td>${fmt(p.avg_score)}</td>
+            <td class="muted">${(p.evaluated_at||'—').slice(0,16)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`;
+  } catch(e) {
+    document.getElementById('j-panels-content').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function loadJournalDecisions() {
+  try {
+    const data = await api('/api/journal/decisions?limit=20');
+    const decs = data.decisions || [];
+    if (decs.length === 0) {
+      document.getElementById('j-decisions-content').textContent = 'No final decisions yet.';
+      return;
+    }
+    document.getElementById('j-decisions-content').innerHTML = `<pre class="code-block">${JSON.stringify(decs, null, 2)}</pre>`;
+  } catch(e) {}
+}
+
+async function loadJournalPackets() {
+  try {
+    const data = await api('/api/journal/packets?limit=30');
+    const packets = data.packets || [];
+    document.getElementById('j-packets-rows').innerHTML = packets.length === 0
+      ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px">No setup packets yet.</td></tr>'
+      : packets.map(p => `<tr>
+          <td class="blue" style="font-size:11px">${(p.packet_id||'').slice(0,14)}</td>
+          <td>${p.symbol||'—'}</td>
+          <td>${p.timeframe||'—'}</td>
+          <td><span class="badge badge-gray" style="font-size:10px">${(p.outcome_source||'—').slice(0,30)}</span></td>
+          <td class="muted">${(p.bar_timestamp||'—').slice(0,16)}</td>
+          <td class="blue">${(p.trade_id||'—').slice(0,12)}</td>
+          <td><button class="btn btn-sm" onclick="inspectPacket('${p.packet_id}')">Inspect</button></td>
+        </tr>`).join('');
+  } catch(e) {}
+}
+
+function inspectPacket(packetId) {
+  showSection('pipeline');
+  setTimeout(() => loadPipelineDetail(packetId), 300);
+}
+
+async function loadJournalCalibration() {
+  try {
+    const data = await api('/api/journal/calibration');
+    const recs = data.calibration || [];
+    if (recs.length === 0) {
+      document.getElementById('j-calibration-content').textContent = 'No calibration records yet.';
+      return;
+    }
+    document.getElementById('j-calibration-content').innerHTML = `<pre class="code-block">${JSON.stringify(recs, null, 2)}</pre>`;
+  } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════════
+// Actions
+// ════════════════════════════════════════════════════════════
+async function startRunner(simMode) {
+  setActionOutput(`Starting runner (simulation=${simMode})…`);
+  try {
+    const data = await api('/api/actions/start_runner', 'POST', {simulation_mode: simMode});
+    setActionOutput(`${data.ok ? '✓' : '✗'} ${data.message}`);
+    await fetchStatus();
+  } catch(e) {
+    setActionOutput(`Error: ${e.message}`);
+  }
+}
+
+async function stopRunner() {
+  setActionOutput('Stopping runner…');
+  try {
+    const data = await api('/api/actions/stop_runner', 'POST', {});
+    setActionOutput(`${data.ok ? '✓' : '✗'} ${data.message}`);
+    await fetchStatus();
+  } catch(e) {
+    setActionOutput(`Error: ${e.message}`);
+  }
+}
+
+async function refreshJournalConn() {
+  setActionOutput('Refreshing journal connection…');
+  try {
+    const data = await api('/api/actions/refresh_journal', 'POST', {});
+    setActionOutput(`${data.ok ? '✓' : '✗'} ${data.message}`);
+  } catch(e) {
+    setActionOutput(`Error: ${e.message}`);
+  }
+}
+
+async function clearLogs() {
+  try {
+    await api('/api/actions/clear_logs', 'POST', {});
+    clearEventDisplay();
+    allEvents = [];
+    setActionOutput('✓ Log buffer cleared.');
+  } catch(e) {
+    setActionOutput(`Error: ${e.message}`);
+  }
+}
+
+function exportLogs() {
+  const lines = allEvents.map(ev => `[${ev.timestamp||ev.ts||''}] [${ev.event_type}] ${JSON.stringify(ev)}`).join('\n');
+  const blob = new Blob([lines], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `console_logs_${new Date().toISOString().slice(0,19)}.txt`;
+  a.click();
+  setActionOutput('✓ Logs exported.');
+}
+
+function setActionOutput(msg) {
+  const el = document.getElementById('action-output');
+  if (el) el.textContent = `[${new Date().toISOString().slice(11,19)}] ${msg}`;
+}
+
+// ════════════════════════════════════════════════════════════
+// Utilities
+// ════════════════════════════════════════════════════════════
+async function api(url, method='GET', body=null) {
+  const opts = {method, headers: {'Content-Type': 'application/json'}};
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+function fmt(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return v.toLocaleString();
+    return v.toFixed(v > 100 ? 0 : v > 1 ? 2 : 4);
+  }
+  return String(v);
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  connectWS();
+  refreshAll();
+  // Poll state every 10 seconds
+  setInterval(refreshAll, 10000);
+});
+</script>
+</body>
+</html>
