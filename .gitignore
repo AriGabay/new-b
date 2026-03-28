@@ -1,0 +1,130 @@
+/.claude
+settings.local.json
+.claude
+
+# ----------------------------
+# OS / Finder
+# ----------------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------------
+# Python cache / compiled files
+# ----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ----------------------------
+# Virtual environments
+# ----------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# ----------------------------
+# Python tooling caches
+# ----------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+
+# ----------------------------
+# Coverage / test output
+# ----------------------------
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+nosetests.xml
+pytestdebug.log
+
+# ----------------------------
+# Build / packaging
+# ----------------------------
+build/
+dist/
+site/
+.eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+
+# ----------------------------
+# Jupyter
+# ----------------------------
+.ipynb_checkpoints/
+
+# ----------------------------
+# Environment / secrets
+# ----------------------------
+.env
+.env.*
+*.env
+.envrc
+.python-version
+secrets.yml
+secrets.yaml
+config.local.yml
+config.local.yaml
+config.local.json
+
+# ----------------------------
+# IDE / editor
+# ----------------------------
+.vscode/
+.idea/
+*.iml
+
+# ----------------------------
+# Logs / runtime files
+# ----------------------------
+*.log
+logs/
+tmp/
+temp/
+
+# ----------------------------
+# Local databases / runtime state
+# ----------------------------
+*.db
+*.sqlite
+*.sqlite3
+
+# Keep example or schema DBs only if you intentionally want them versioned.
+# Current local runtime DB seen in project tree:
+src/data/journal.db
+
+# ----------------------------
+# Local test / debug artifacts
+# ----------------------------
+*.out
+*.err
+*.pid
+
+# ----------------------------
+# macOS / shell misc
+# ----------------------------
+.AppleDouble
+.LSOverride
+
+# ----------------------------
+# Optional: ignore local generated docs/artifacts if they start appearing
+# Uncomment only if needed later
+# ----------------------------
+# docs/_build/
+# docs/generated/
+# research/generated/
+
+# ----------------------------
+# Optional: ignore local credentials / exchange keys
+# Uncomment or adapt if you add these files later
+# ----------------------------
+bybit_keys.json
+credentials.json
+config/secrets.py
