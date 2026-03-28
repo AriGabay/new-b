@@ -19,8 +19,14 @@ Depends on: INDICATORS, CANDLESTICK, CHART_PATTERN, TECHNICAL_STRUCTURE, NEWS_MA
 Always-on: NO.
 
 Confirmation gate rules:
-  - Minimum 2 group signal bundles with same-direction signals.
-  - At least 1 must be a chart pattern or candlestick (not indicator-only).
+  - Wait for BOTH indicators AND candlestick bundles before evaluating.
+    This ensures candlestick quality is always available for composite score
+    and prevents proposals from firing before bar-level price action is known.
+  - Minimum 2 signals with same-direction across all collected bundles.
+  - At least 1 must be a candlestick or chart_pattern signal (enforced in code).
+    Pure indicator-only proposals are suppressed: they consistently produce
+    ema_alignment="mixed" or "partial" at transition bars, which the panel
+    evaluators score as reject-zone.
   - Structural level required if any signal has requires_structural_level=True.
   - Regime filter: if btc_macro == 'bear', block long proposals (size_reduction applies).
 
@@ -151,14 +157,29 @@ class EntryGroup(BaseGroup):
 
         bundles = self._pending_bundles[symbol]
 
-        # Trigger when we have at least an indicators bundle (minimum required).
-        # The key may come in as "indicators" or "GroupID.INDICATORS" depending
-        # on how the upstream group serialises its group_id.
+        # Trigger when we have BOTH an indicators bundle AND a candlestick bundle.
+        #
+        # Previously the gate fired on indicators alone.  This caused proposals
+        # to be evaluated before CandlestickGroup had published its bundle for
+        # the same bar, producing proposals with candlestick_quality=0.0 and
+        # ema_alignment="mixed" (crossover-transition bars).  Those proposals
+        # could never satisfy the panel's avg_score >= 6.5 requirement.
+        #
+        # CandlestickGroup always publishes a bundle every bar (even with 0
+        # signals — see CandlestickGroup._process_features line 169 comment).
+        # Waiting for it is therefore safe: no proposals are silently dropped.
+        #
+        # The key may come in as "indicators"/"GroupID.INDICATORS" or
+        # "candlestick"/"GroupID.CANDLESTICK" depending on how the upstream
+        # group serialises its group_id.
         has_indicators = any(
             "indicators" in k.lower() for k in bundles
         )
+        has_candlestick = any(
+            "candlestick" in k.lower() for k in bundles
+        )
 
-        if has_indicators and symbol not in self._evaluating:
+        if has_indicators and has_candlestick and symbol not in self._evaluating:
             self._evaluating.add(symbol)
             try:
                 await self._evaluate_trade_opportunity(symbol)
@@ -256,7 +277,31 @@ class EntryGroup(BaseGroup):
             primary_signals = short_signals
 
         # ------------------------------------------------------------------
-        # 5. Regime filter: block LONGs in confirmed bear macro
+        # 5a. Bar-level confirmation gate: require candlestick or chart_pattern
+        # ------------------------------------------------------------------
+        # The panel's Candlestick evaluator scores 4.0 (abstain/reject) when no
+        # pattern is present.  WickAnalysis and MarketContext also score poorly
+        # without candlestick context.  Proposals that are pure indicator signals
+        # carry ema_alignment="mixed" or "partial" (crossover-transition bars) and
+        # are structurally unable to reach the panel's avg_score >= 6.5 threshold.
+        #
+        # Enforcing bar-level confirmation here means the composite score will
+        # always include non-zero candlestick_quality, and the setup packet will
+        # carry a real pattern for the panel evaluators to score.
+        has_bar_level_confirmation = any(
+            getattr(s, "signal_type", "") in ("candlestick", "chart_pattern")
+            for s in primary_signals
+        )
+        if not has_bar_level_confirmation:
+            logger.debug(
+                "EntryGroup: no candlestick/chart_pattern confirmation for %s "
+                "(%s) — indicator-only proposals suppressed (panel incompatible).",
+                symbol, direction.value,
+            )
+            return
+
+        # ------------------------------------------------------------------
+        # 5b. Regime filter: block LONGs in confirmed bear macro
         # ------------------------------------------------------------------
         if regime.btc_macro == "bear" and direction == Direction.LONG:
             logger.info(
@@ -265,7 +310,7 @@ class EntryGroup(BaseGroup):
             return
 
         # ------------------------------------------------------------------
-        # 6. Composite score computation
+        # 6. Composite score computation (now includes candlestick_quality > 0)
         # ------------------------------------------------------------------
         composite_score, score_breakdown = self._compute_composite_score(
             bundles=bundles,

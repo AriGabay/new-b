@@ -5,20 +5,34 @@ BTC/Bybit focused. Processes FeatureVector and produces indicator signals.
 
 Active hypotheses:
   H3-001: RSI divergence (impulse-filtered)
-  H3-002: EMA 20/50 crossover (golden/death cross)
+  H3-002: EMA 20/50 crossover (golden/death cross) — transition signal
   H3-004: BB squeeze → breakout
+  H3-005: EMA trend continuation / pullback-to-EMA — established-trend signal
 
-10 sub-agent methods:
-  1.  _parse_features        — extract and classify all indicator values
-  2.  _detect_ema_crossover  — golden/death cross detection (H3-002)
-  3.  _detect_rsi_signal     — RSI trend + divergence setup check
-  4.  _detect_macd_signal    — MACD cross + histogram momentum
-  5.  _detect_bb_signal      — BB squeeze / expansion breakout (H3-004)
-  6.  _compute_regime        — compute RegimeContext, update SystemState
-  7.  _validate_signals      — remove contradictory signals
-  8.  _score_signals         — assign quality_score to each signal
-  9.  _summarize_indicator_state — produce text summary for setup packet
-  10. _build_bundle          — assemble GroupSignalBundle
+H3-002 vs H3-005 distinction:
+  H3-002 fires at the EXACT crossover bar (EMA20 just crossed EMA50).  At
+  that moment EMA alignment is "partial" or "mixed" — the trend is beginning,
+  not established.  The panel evaluators (TrendFollowing, Momentum) score
+  these transition setups poorly.
+
+  H3-005 fires during ESTABLISHED trends (EMA20 < EMA50 < EMA200 for SHORT;
+  EMA20 > EMA50 > EMA200 for LONG) when price pulls back near EMA20.  At
+  these bars EMA alignment is "full_bear" or "full_bull", which is what the
+  panel evaluators reward.  H3-005 is the primary source of high-quality
+  continuation proposals.
+
+11 sub-agent methods:
+  1.  _parse_features             — extract and classify all indicator values
+  2.  _detect_ema_crossover       — golden/death cross detection (H3-002)
+  3.  _detect_trend_continuation  — pullback-to-EMA in established trend (H3-005)
+  4.  _detect_rsi_signal          — RSI trend + divergence setup check
+  5.  _detect_macd_signal         — MACD cross + histogram momentum
+  6.  _detect_bb_signal           — BB squeeze / expansion breakout (H3-004)
+  7.  _compute_regime             — compute RegimeContext, update SystemState
+  8.  _validate_signals           — remove contradictory signals
+  9.  _score_signals              — assign quality_score to each signal
+  10. _summarize_indicator_state  — produce text summary for setup packet
+  11. _build_bundle               — assemble GroupSignalBundle
 
 LLM: NOT permitted.
 Trigger: FeatureReadyEvent.
@@ -122,6 +136,10 @@ class IndicatorsGroup(BaseGroup):
         ema_sig = self._detect_ema_crossover(fv)
         if ema_sig is not None:
             signals.append(ema_sig)
+
+        cont_sig = self._detect_trend_continuation(fv)
+        if cont_sig is not None:
+            signals.append(cont_sig)
 
         rsi_sig = self._detect_rsi_signal(fv)
         if rsi_sig is not None:
@@ -312,7 +330,120 @@ class IndicatorsGroup(BaseGroup):
         )
 
     # ------------------------------------------------------------------
-    # Sub-agent 3: _detect_rsi_signal (H3-001)
+    # Sub-agent 3: _detect_trend_continuation (H3-005)
+    # ------------------------------------------------------------------
+
+    def _detect_trend_continuation(self, fv: FeatureVector) -> Optional[IndicatorSignal]:
+        """
+        H3-005: EMA trend continuation / pullback-to-EMA signal.
+
+        Fires when price is in an ESTABLISHED trend (full EMA alignment with
+        meaningful separation between EMA20 and EMA50) and pulls back near
+        EMA20, suggesting a high-probability continuation entry.
+
+        This is distinct from H3-002 (EMA crossover):
+        - H3-002 fires at the exact transition bar (EMA20 just crosses EMA50).
+          At that moment EMA alignment is "partial" or "mixed" and the panel
+          evaluators penalise the ambiguous signal quality.
+        - H3-005 fires during the established trend phase where EMA alignment
+          is "full_bear" / "full_bull" — the bar type that TrendFollowing,
+          MacroRegime, and Momentum score positively.
+
+        SHORT conditions (ALL required):
+          - full_bear EMA alignment: EMA20 < EMA50 < EMA200
+          - EMA separation >= 0.2 % of EMA50 (trend committed, not just crossed)
+          - Price within 3 % below EMA20 (pullback retest of short-term EMA)
+          - ADX >= 25 (trending market, not ranging)
+          - volume_ratio >= 1.0 (at-least-average participation)
+          - RSI between 35 and 65 (pulled back from overbought, not yet oversold)
+
+        LONG conditions (mirror of SHORT):
+          - full_bull EMA alignment: EMA20 > EMA50 > EMA200
+          - EMA separation >= 0.2 %
+          - Price within 3 % above EMA20 (pullback to short-term EMA from above)
+          - ADX >= 25, volume_ratio >= 1.0, RSI 35–65
+
+        The "within 3 % of EMA20" window captures:
+          - Shallow pullbacks that touch or approach EMA20 (prime continuation zone)
+          - Excludes deep retracements far below EMA20 (different setup type)
+        """
+        # Minimum trend strength and volume
+        if fv.adx14 < 25.0:
+            return None
+        if fv.volume_ratio < 1.0:
+            return None
+
+        ema20 = float(fv.ema20)
+        ema50 = float(fv.ema50)
+        ema200 = float(fv.ema200)
+        close = float(fv.close)
+
+        # Require meaningful EMA separation so we don't fire near the crossover bar
+        ema_separation_pct = abs(ema50 - ema20) / ema50 if ema50 > 0 else 0.0
+        if ema_separation_pct < 0.002:   # < 0.2 % — EMAs too close
+            return None
+
+        full_bear = fv.ema20 < fv.ema50 and fv.ema50 < fv.ema200
+        full_bull = fv.ema20 > fv.ema50 and fv.ema50 > fv.ema200
+
+        if not full_bear and not full_bull:
+            return None
+
+        rsi = fv.rsi14
+
+        if full_bear:
+            # SHORT continuation: price pulls back to EMA20 from below.
+            # close within 3 % BELOW EMA20 — the classic retest zone.
+            price_near_ema20 = (close > ema20 * 0.97) and (close <= ema20 * 1.01)
+            # RSI pulled back toward mid-zone (not oversold, not still overbought)
+            rsi_ok = 35.0 < rsi < 65.0
+            if not (price_near_ema20 and rsi_ok):
+                return None
+            direction = Direction.SHORT
+            subtype = "trend_continuation_short"
+            ema_context = "full_bear_alignment"
+
+        else:  # full_bull
+            # LONG continuation: price pulls back to EMA20 from above.
+            price_near_ema20 = (close < ema20 * 1.03) and (close >= ema20 * 0.99)
+            rsi_ok = 35.0 < rsi < 65.0
+            if not (price_near_ema20 and rsi_ok):
+                return None
+            direction = Direction.LONG
+            subtype = "trend_continuation_long"
+            ema_context = "full_bull_alignment"
+
+        return IndicatorSignal(
+            group_id=self.group_id.value,
+            symbol=fv.symbol,
+            timeframe=fv.timeframe,
+            timestamp=fv.timestamp,
+            direction=direction,
+            signal_type="indicator",
+            signal_subtype=subtype,
+            hypothesis_ref="H3-005",
+            quality_score=0.0,   # scored later by _score_signals
+            context_confirmed=True,
+            confirmation_required=False,
+            confirmed_on_bar_close=True,
+            indicator_name="ema_trend_continuation",
+            indicator_values={
+                "ema20": ema20,
+                "ema50": ema50,
+                "ema200": ema200,
+                "close": close,
+                "ema_separation_pct": round(ema_separation_pct * 100, 3),
+                "ema_context": ema_context,
+                "adx14": fv.adx14,
+                "volume_ratio": fv.volume_ratio,
+                "rsi14": rsi,
+            },
+            context_filter_passed=True,
+            metadata={"setup_type": "trend_continuation"},
+        )
+
+    # ------------------------------------------------------------------
+    # Sub-agent 4: _detect_rsi_signal (H3-001)
     # ------------------------------------------------------------------
 
     def _detect_rsi_signal(self, fv: FeatureVector) -> Optional[IndicatorSignal]:
@@ -739,7 +870,10 @@ class IndicatorsGroup(BaseGroup):
                 score += 0.1
 
             # Hypothesis priority boost
-            if sig.hypothesis_ref in ("H3-002", "H3-004"):
+            # H3-005 gets the same boost as H3-002 and H3-004: it fires in
+            # established-trend conditions that are meaningfully different from
+            # lower-quality indicator-only signals.
+            if sig.hypothesis_ref in ("H3-002", "H3-004", "H3-005"):
                 score += 0.05
 
             # Cap at 1.0
