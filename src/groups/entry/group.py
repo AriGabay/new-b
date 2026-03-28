@@ -25,13 +25,17 @@ Confirmation gate rules:
   - Regime filter: if btc_macro == 'bear', block long proposals (size_reduction applies).
 
 Composite score formula:
-  composite_score = (
-      0.35 × chart_pattern_quality (0.0 if none)
-    + 0.25 × candlestick_quality   (0.0 if none)
-    + 0.20 × indicator_quality     (0.0 if none)
+  raw_score = (
+      0.35 × chart_pattern_quality (0.0 if excluded — Phase 3)
+    + 0.25 × candlestick_quality   (0.0 if no pattern detected)
+    + 0.20 × indicator_quality     (0.0 if no indicator signal)
     + 0.10 × structural_alignment  (1.0 = at S/R, 0.0 = no S/R)
-    + 0.10 × historian_win_rate    (from HistoricalAnalog, 0.0 if no history)
+    + 0.10 × historian_win_rate    (0.0 if excluded — Phase 3)
   )
+  composite_score = raw_score / ACTIVE_COMPOSITE_WEIGHT_SUM
+    where ACTIVE_COMPOSITE_WEIGHT_SUM = sum of weights for ACTIVE groups only.
+    Phase 3: 0.25 + 0.20 + 0.10 = 0.55 → ceiling = 0.4875 / 0.55 = 0.8864.
+    Phase 4+: all groups active → ACTIVE_COMPOSITE_WEIGHT_SUM = 1.00 (identity).
   Threshold to pass confirmation gate: composite_score >= 0.50.
   Threshold to invoke CriticAgent: composite_score >= 0.60.
 
@@ -71,6 +75,37 @@ logger = logging.getLogger(__name__)
 CONFIRMATION_GATE_MIN_GROUPS = 2
 COMPOSITE_SCORE_THRESHOLD    = 0.50
 CRITIC_SCORE_THRESHOLD       = 0.60
+
+# ---------------------------------------------------------------------------
+# Active score component weights (Phase 3)
+#
+# The composite_score formula has 5 components totalling 1.00 when all
+# groups are wired.  In Phase 3, ChartPatternGroup and HistorianAgent are
+# excluded (raise NotImplementedError / hardcoded None).  If the raw
+# weighted sum is divided by 1.00 those two absent components drag the
+# ceiling down to 0.4875 — permanently below the 0.50 threshold.
+#
+# The fix: divide the raw weighted sum by the SUM OF ACTIVE WEIGHTS only.
+# This makes composite_score express "fraction of achievable quality"
+# rather than "fraction of hypothetical 5-group maximum".
+#
+# Phase 3 active groups:  indicator(0.20) + candlestick(0.25) + structural(0.10) = 0.55
+# Ceiling:  0.4875 / 0.55 = 0.8864  (above 0.50 threshold — entries can fire)
+#
+# When Phase 4 adds ChartPatternGroup (0.35) and HistorianAgent (0.10):
+#   ACTIVE_COMPOSITE_WEIGHT_SUM becomes 1.00 → normalization is identity.
+# ---------------------------------------------------------------------------
+
+_ACTIVE_SCORE_COMPONENTS: dict = {
+    # name              weight   active since
+    "indicator":        0.20,   # Phase 3
+    "candlestick":      0.25,   # Phase 3
+    "structural":       0.10,   # Phase 3
+    # "chart_pattern":  0.35,   # Phase 4+ (ChartPatternGroup not yet implemented)
+    # "historian":      0.10,   # Phase 4+ (HistorianAgent not yet wired)
+}
+
+ACTIVE_COMPOSITE_WEIGHT_SUM: float = sum(_ACTIVE_SCORE_COMPONENTS.values())  # 0.55 in Phase 3
 
 
 class EntryGroup(BaseGroup):
@@ -344,12 +379,21 @@ class EntryGroup(BaseGroup):
             historian_analog.win_rate if historian_analog is not None else 0.0
         )
 
-        composite_score = (
+        raw_score = (
             0.35 * chart_pattern_quality
             + 0.25 * candlestick_quality
             + 0.20 * indicator_quality
             + 0.10 * structural_alignment
             + 0.10 * historian_win_rate
+        )
+
+        # Normalize by the sum of ACTIVE component weights so excluded groups
+        # do not depress the ceiling below the threshold.  See module-level
+        # ACTIVE_COMPOSITE_WEIGHT_SUM for the active component set.
+        composite_score = (
+            raw_score / ACTIVE_COMPOSITE_WEIGHT_SUM
+            if ACTIVE_COMPOSITE_WEIGHT_SUM > 0
+            else 0.0
         )
 
         score_breakdown = {
@@ -358,6 +402,9 @@ class EntryGroup(BaseGroup):
             "indicator_quality": indicator_quality,
             "structural_alignment": structural_alignment,
             "historian_win_rate": historian_win_rate,
+            "raw_score": round(raw_score, 6),
+            "active_weight_sum": ACTIVE_COMPOSITE_WEIGHT_SUM,
+            "normalized_composite_score": round(composite_score, 6),
         }
 
         return composite_score, score_breakdown
