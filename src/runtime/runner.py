@@ -198,11 +198,17 @@ class BtcBybitPaperRunner:
         self._panel_decision.set_structural_cache(
             self._technical_structure._structural_cache
         )
+        # Give PanelDecisionGroup access to CandlestickGroup's signals cache.
+        # Fix: Phase 6.2.5 — this wire was documented but never implemented,
+        # causing patterns_detected=[] in every BTCSetupPacket.
+        self._panel_decision.set_candlestick_signal_cache(
+            self._candlestick._signals_cache
+        )
         # Give CandlestickGroup reference to TechnicalStructureGroup
         if hasattr(self._candlestick, "set_technical_structure_group"):
             self._candlestick.set_technical_structure_group(self._technical_structure)
 
-        logger.debug("Runner: cross-group caches wired.")
+        logger.debug("Runner: cross-group caches wired (including candlestick signals cache).")
 
     async def _wire_learning_layer(self) -> None:
         """

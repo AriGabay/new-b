@@ -258,6 +258,11 @@ class StructuralLevelBundle:
     at_support:         bool = False
     nearest_resistance: Optional[StructuralLevel] = None
     nearest_support:    Optional[StructuralLevel] = None
+    # Trend structure fields — populated by TechnicalStructureGroup._classify_trend()
+    structure_quality:  str  = "none"     # "none" | "weak" | "moderate"
+    trend_direction:    str  = "sideways" # "uptrend" | "downtrend" | "sideways"
+    higher_highs:       bool = False
+    higher_lows:        bool = False
 
 
 @dataclass

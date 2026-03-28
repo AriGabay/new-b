@@ -77,6 +77,10 @@ class CandlestickGroup(BaseGroup):
         self._feature_history:    dict[str, deque] = {}
         self._structural_cache:   dict[str, StructuralLevelBundle] = {}
         self._tech_structure_group = None
+        # signals_cache: most-recent CandlestickSignal list per symbol.
+        # Populated each bar so PanelDecisionGroup can retrieve via runner wiring.
+        # Fix: Phase 6.2.5 — previously missing; caused patterns_detected=[] in setup packet.
+        self._signals_cache:      dict[str, list] = {}
 
     def set_technical_structure_group(self, group) -> None:
         """Wire up a direct reference to TechnicalStructureGroup for S/R queries."""
@@ -165,6 +169,11 @@ class CandlestickGroup(BaseGroup):
             doji_sig = self._detect_doji(symbol, bars[-3:], structural)
             if doji_sig is not None:
                 signals.append(doji_sig)
+
+        # Store signals in per-symbol cache so PanelDecisionGroup can retrieve them.
+        # This is the fix for Phase 6.2.5: previously the cache was never populated,
+        # causing patterns_detected=[] in every setup packet.
+        self._signals_cache[symbol] = list(signals)
 
         # Build and publish bundle (empty signals still published so downstream knows we ran)
         bundle = GroupSignalBundle(

@@ -149,13 +149,14 @@ class TechnicalStructureGroup(BaseGroup):
             self._support_levels[symbol], key=lambda l: l.touches, reverse=True
         )[:MAX_LEVELS]
 
-        # 5. Build bundle (sub-agent 9)
+        # 5. Build bundle (sub-agent 9) — pass bars for _classify_trend()
         bundle = self._build_structural_bundle(
             symbol=symbol,
             timeframe=fv.timeframe,
             fv=fv,
             resistance=self._resistance_levels[symbol],
             support=self._support_levels[symbol],
+            bars=bars,
         )
 
         # 6. Store and publish (sub-agent 10)
@@ -454,11 +455,33 @@ class TechnicalStructureGroup(BaseGroup):
         fv: FeatureVector,
         resistance: list[StructuralLevel],
         support: list[StructuralLevel],
+        bars: list,
     ) -> StructuralLevelBundle:
-        """Assemble StructuralLevelBundle for current bar."""
+        """Assemble StructuralLevelBundle for current bar.
+
+        Calls _classify_trend() to populate higher_highs, higher_lows,
+        trend_direction, and derives structure_quality from those results.
+        These fields were previously missing from the bundle, causing the
+        setup packet to always show structure_quality='none' and
+        trend_direction='sideways' regardless of actual market structure.
+        Fix: Phase 6.2.5 integration repair.
+        """
         at_resistance, at_support, nearest_res, nearest_sup = self._proximity_flags(
             resistance, support, fv.close, fv.atr14
         )
+
+        higher_highs, higher_lows, trend_direction = self._classify_trend(bars, fv)
+
+        # Derive structure_quality from HH/HL analysis:
+        #   "none"     — no higher-high or higher-low detected
+        #   "weak"     — one of HH/HL present (partial structure)
+        #   "moderate" — both HH and HL present with established trend direction
+        if higher_highs and higher_lows and trend_direction != "sideways":
+            structure_quality = "moderate"
+        elif higher_highs or higher_lows:
+            structure_quality = "weak"
+        else:
+            structure_quality = "none"
 
         return StructuralLevelBundle(
             symbol=symbol,
@@ -470,6 +493,10 @@ class TechnicalStructureGroup(BaseGroup):
             at_support=at_support,
             nearest_resistance=nearest_res,
             nearest_support=nearest_sup,
+            structure_quality=structure_quality,
+            trend_direction=trend_direction,
+            higher_highs=higher_highs,
+            higher_lows=higher_lows,
         )
 
     # ------------------------------------------------------------------
