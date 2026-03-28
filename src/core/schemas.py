@@ -393,6 +393,12 @@ class Position:
     correlation_cluster:  str = "btc"
     setup_refs:           list[str] = field(default_factory=list)
     hypothesis_refs:      list[str] = field(default_factory=list)
+    # Learning layer link fields — populated from PanelApprovedProposalEvent.
+    # Empty string when position was opened without panel (direct/legacy path).
+    composite_score:      float = 0.0
+    packet_id:            str = ""   # links to setup_packets DB row
+    panel_id:             str = ""   # links to panel_summaries DB row
+    decision_id:          str = ""   # links to final_decisions DB row
 
 
 @dataclass

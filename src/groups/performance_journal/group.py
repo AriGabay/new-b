@@ -77,7 +77,8 @@ class PerformanceJournalGroup(BaseGroup):
         self._journal_db = None
         self._trade_counts: dict = {}
         self._last_weekly_summary = None
-        self._summarizer = None   # SummarizerAgent, injected at startup
+        self._summarizer = None         # SummarizerAgent, injected at startup
+        self._outcome_attributor = None  # OutcomeAttributor, injected by runner after setup
 
     async def _setup(self) -> None:
         # Subscribe to all relevant event types
@@ -164,7 +165,7 @@ class PerformanceJournalGroup(BaseGroup):
             self._journal_db.insert_trade_open(
                 position=event.position,
                 proposal_id=event.position.order_id,
-                composite_score=0.0,  # proposal score not in PositionOpenEvent — Phase 4 enhancement
+                composite_score=event.position.composite_score,
             )
             logger.info(
                 "PerformanceJournalGroup: trade opened — %s %s @ %s",
@@ -181,11 +182,11 @@ class PerformanceJournalGroup(BaseGroup):
                 exit_signal=event.exit_signal,
                 position=event.final_position,
             )
-            # Update SystemState equity/drawdown
-            await self.state.close_position(
-                event.final_position.position_id,
-                event.exit_signal.pnl_usd,
-            )
+            # NOTE: state.close_position() is NOT called here.
+            # ExitGroup._execute_exit() already calls state.close_position() before
+            # publishing PositionCloseEvent. Calling it again here would double-count
+            # PnL (equity += pnl twice) and double-increment total_trades.
+            # This group's responsibility is journal logging only.
             logger.info(
                 "PerformanceJournalGroup: trade closed — %s PnL=$%.2f (%.2fR) reason=%s",
                 event.final_position.symbol,
@@ -195,6 +196,40 @@ class PerformanceJournalGroup(BaseGroup):
             )
         except Exception as exc:
             logger.warning("PerformanceJournalGroup: failed to log position close: %s", exc)
+
+        # Run attribution pipeline if OutcomeAttributor is wired.
+        # This updates trader calibration, setup family records, and logs outcome_attributions.
+        # Requires packet_id/panel_id/decision_id carried on the Position (set by RiskLeverageGroup
+        # from PanelApprovedProposalEvent). If Position was opened without the panel path these
+        # will be empty strings and attribution still runs (but without DB links).
+        if self._outcome_attributor is not None and event.final_position is not None:
+            try:
+                pos = event.final_position
+                sig = event.exit_signal
+                pnl_r = sig.pnl_r if sig else 0.0
+                if pnl_r > 0.05:
+                    outcome = "win"
+                elif pnl_r < -0.05:
+                    outcome = "loss"
+                else:
+                    outcome = "breakeven"
+                setup_family = pos.setup_refs[0] if pos.setup_refs else "unknown"
+                self._outcome_attributor.process_closed_trade(
+                    trade_id=pos.position_id,
+                    outcome=outcome,
+                    pnl_r=pnl_r,
+                    exit_reason=sig.exit_reason.value if sig else "unknown",
+                    bars_held=sig.bars_held if sig else 0,
+                    setup_family=setup_family,
+                    packet_id=pos.packet_id,
+                    panel_id=pos.panel_id,
+                    decision_id=pos.decision_id,
+                    composite_score=pos.composite_score,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "PerformanceJournalGroup: outcome attribution failed: %s", exc
+                )
 
     async def _log_system_alert(self, event: SystemAlertEvent) -> None:
         if self._journal_db is None:
@@ -219,8 +254,15 @@ class PerformanceJournalGroup(BaseGroup):
         """
         Compare recent 50-trade window vs full 200-trade window.
         If recent win_rate < 0.60 × full_window win_rate → emit EdgeDecayAlert.
+
+        STATUS: DEFERRED — Phase 4+ implementation pending.
+        Requires sufficient trade history (min 50 trades) before meaningful comparison.
+        Not called automatically; must be wired to a periodic scheduler.
         """
-        raise NotImplementedError("Phase 2 pending")
+        logger.debug(
+            "_check_edge_decay: deferred (Phase 4+ pending) for hypothesis %s",
+            hypothesis_id,
+        )
 
     async def _check_hypothesis_validation(self, hypothesis_id: str) -> None:
         """
@@ -231,15 +273,23 @@ class PerformanceJournalGroup(BaseGroup):
         - Max drawdown < 30%
         If met: update HYPOTHESIS_REGISTRY status to IN_SAMPLE.
         OOS gate (Gate 2) is separate — requires human sign-off.
+
+        STATUS: DEFERRED — Phase 4+ implementation pending.
+        Requires HYPOTHESIS_REGISTRY implementation and min 30 closed trades.
         """
-        raise NotImplementedError("Phase 2 pending")
+        logger.debug(
+            "_check_hypothesis_validation: deferred (Phase 4+ pending) for hypothesis %s",
+            hypothesis_id,
+        )
 
     async def _run_weekly_summary(self) -> None:
         """
         Invoke SummarizerAgent (LLM) to produce narrative edge report.
         Output: advisory text only. Stored in journal. Never influences orders.
+
+        STATUS: DEFERRED — SummarizerAgent not yet implemented.
         """
-        raise NotImplementedError("Phase 2 pending")
+        logger.debug("_run_weekly_summary: deferred (SummarizerAgent not yet implemented)")
 
     def query_historical_analogs(
         self,
@@ -251,5 +301,13 @@ class PerformanceJournalGroup(BaseGroup):
         Called by HistorianAgent (via Entry group) to get historical trade stats.
         Returns: {similar_trades_count, win_rate, avg_r_multiple,
                   common_failure_modes, last_10_outcomes}
+
+        STATUS: DEFERRED — HistorianAgent not yet implemented.
+        Returns empty dict until wired. EntryGroup._historian is always None
+        in current runtime, so this path is never reached.
         """
-        raise NotImplementedError("Phase 2 pending")
+        logger.debug(
+            "query_historical_analogs: deferred (HistorianAgent not yet implemented) "
+            "for hypothesis %s direction %s", hypothesis_id, direction,
+        )
+        return {}

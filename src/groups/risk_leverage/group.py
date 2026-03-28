@@ -50,6 +50,7 @@ from agents.base.group import BaseGroup
 from core.events import (
     CandidateTradeEvent,
     EventBus,
+    PanelApprovedProposalEvent,
     PositionOpenEvent,
     RiskDecisionEvent,
     SystemEvent,
@@ -89,20 +90,79 @@ class RiskLeverageGroup(BaseGroup):
 
     def __init__(self, state: SystemState, bus: EventBus, config: Optional[dict] = None) -> None:
         super().__init__(state, bus, config)
+        # Set by runner.set_panel_wired(True) when PanelDecisionGroup is active.
+        # When True, CandidateTradeEvent is ignored — proposals MUST pass Layer B+C
+        # (TraderEvaluatorPanel + FinalDecisionGroup) before reaching risk evaluation.
+        # When False (default), direct CandidateTradeEvent path is active (unit tests,
+        # backtest injection, or standalone use without panel).
+        self._panel_wired: bool = False
+
+    def set_panel_wired(self, wired: bool = True) -> None:
+        """
+        Called by BtcBybitPaperRunner after PanelDecisionGroup is wired.
+        Enables the panel gate: CandidateTradeEvent is silently ignored.
+        Only PanelApprovedProposalEvent (from PanelDecisionGroup) is processed.
+
+        This prevents CandidateTradeEvent from bypassing the 20-trader panel
+        and FinalDecisionGroup safety rails in the wired runtime.
+        """
+        self._panel_wired = wired
+        logger.info(
+            "RiskLeverageGroup: panel gate %s — "
+            "CandidateTradeEvent %s, PanelApprovedProposalEvent active.",
+            "ENGAGED" if wired else "DISENGAGED",
+            "IGNORED (panel bypass blocked)" if wired else "ACTIVE (direct path)",
+        )
 
     async def _setup(self) -> None:
+        # Primary wired path: proposal approved by Layer B+C
+        await self.bus.subscribe(PanelApprovedProposalEvent, self.handle_event)
+        # Also subscribe to CandidateTradeEvent for standalone/test use.
+        # When panel is wired (set_panel_wired=True), this path is gated out
+        # in _handle_event() to prevent bypass of PanelDecisionGroup.
         await self.bus.subscribe(CandidateTradeEvent, self.handle_event)
-        logger.info("RiskLeverageGroup subscribed to CandidateTradeEvent.")
+        logger.info(
+            "RiskLeverageGroup subscribed to PanelApprovedProposalEvent (primary) "
+            "and CandidateTradeEvent (gated — active only when panel NOT wired)."
+        )
 
     async def _handle_event(self, event: SystemEvent) -> None:
-        if isinstance(event, CandidateTradeEvent) and event.proposal:
+        if isinstance(event, PanelApprovedProposalEvent) and event.proposal:
+            # Primary wired path: proposal has passed Layer B+C.
+            # Thread packet_id/panel_id/decision_id so Position carries learning DB links.
+            await self._evaluate_proposal(
+                event.proposal,
+                packet_id=event.packet_id,
+                panel_id=event.panel_id,
+                decision_id=event.decision_id,
+            )
+        elif isinstance(event, CandidateTradeEvent) and event.proposal:
+            if self._panel_wired:
+                # Panel is active. This event was already received by PanelDecisionGroup.
+                # Ignore it here to prevent bypassing the 20-trader panel gate.
+                # Only PanelApprovedProposalEvent (emitted by PanelDecisionGroup after
+                # panel approval) should trigger risk evaluation in the wired runtime.
+                logger.debug(
+                    "RiskLeverageGroup: CandidateTradeEvent IGNORED (panel gate active). "
+                    "Awaiting PanelApprovedProposalEvent for proposal %s.",
+                    getattr(event.proposal, "proposal_id", "?"),
+                )
+                return
+            # Panel not wired (direct/test path): evaluate proposal directly
             await self._evaluate_proposal(event.proposal)
 
-    async def _evaluate_proposal(self, proposal: CandidateTradeProposal) -> None:
+    async def _evaluate_proposal(
+        self,
+        proposal: CandidateTradeProposal,
+        packet_id: str = "",
+        panel_id: str = "",
+        decision_id: str = "",
+    ) -> None:
         """
         Run all 9 risk rules in order.
         Publish RiskDecisionEvent (approved or rejected).
-        If approved: publish PositionOpenEvent and update SystemState.
+        If approved: create Position, open in SystemState, publish PositionOpenEvent.
+        packet_id/panel_id/decision_id link the Position to learning DB records.
         """
         # Rule 1: Mode gate
         result = self._check_mode_gate(proposal)
@@ -157,7 +217,7 @@ class RiskLeverageGroup(BaseGroup):
 
         # All rules passed — compute position size and approve
         order = self._compute_order(proposal, event_risk_reduction)
-        await self._approve(proposal, order)
+        await self._approve(proposal, order, packet_id=packet_id, panel_id=panel_id, decision_id=decision_id)
 
     # ------------------------------------------------------------------
     # Rule implementations (deterministic — no LLM, no external calls)
@@ -346,8 +406,23 @@ class RiskLeverageGroup(BaseGroup):
             max_bars_to_hold=20,
         )
 
-    async def _approve(self, proposal: CandidateTradeProposal, order: RiskApprovedOrder) -> None:
-        """Publish approval and open position in SystemState."""
+    async def _approve(
+        self,
+        proposal: CandidateTradeProposal,
+        order: RiskApprovedOrder,
+        packet_id: str = "",
+        panel_id: str = "",
+        decision_id: str = "",
+    ) -> None:
+        """
+        Publish RiskDecisionEvent (approved), create Position in SystemState,
+        and publish PositionOpenEvent so ExitGroup and Journal receive it.
+
+        packet_id/panel_id/decision_id are threaded from PanelApprovedProposalEvent
+        so the Position carries DB links to the learning layer records.
+        """
+        from core.schemas import Position
+
         await self.bus.publish(
             RiskDecisionEvent(
                 source=self.group_id.value,
@@ -355,10 +430,35 @@ class RiskLeverageGroup(BaseGroup):
                 order=order,
             )
         )
+
+        # Create Position from approved order + learning layer IDs
+        position = Position(
+            order_id=order.order_id,
+            symbol=order.symbol,
+            direction=order.direction,
+            entry_price=order.entry_price,
+            stop_price=order.stop_price,
+            target_price=order.target_price,
+            position_size_usd=order.position_size_usd,
+            leverage=order.leverage,
+            r_amount=order.r_amount,
+            composite_score=proposal.composite_score,
+            packet_id=packet_id,
+            panel_id=panel_id,
+            decision_id=decision_id,
+            setup_refs=list(getattr(proposal, "setup_refs", []) or []),
+            hypothesis_refs=list(getattr(proposal, "hypothesis_refs", []) or []),
+        )
+        await self.state.open_position(position)
+        await self.bus.publish(
+            PositionOpenEvent(source=self.group_id.value, position=position)
+        )
+
         logger.info(
-            "Proposal %s APPROVED: %s leverage=%.2fx size_usd=%s",
+            "Proposal %s APPROVED and position opened: %s %s leverage=%.2fx size_usd=%s",
             proposal.proposal_id,
             proposal.direction,
+            order.symbol,
             order.leverage,
             order.position_size_usd,
         )

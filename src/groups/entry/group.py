@@ -429,5 +429,5 @@ class EntryGroup(BaseGroup):
             historian_analog=historian_analog,
             critic_report=critic_report,
             regime_context=regime,
-            mode_gate=ModeGate.RESEARCH,  # Phase 3: always RESEARCH
+            mode_gate=ModeGate.SHADOW,  # Phase 4+: paper trading (shadow) mode
         )

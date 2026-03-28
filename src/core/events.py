@@ -66,6 +66,34 @@ class CandidateTradeEvent(SystemEvent):
 
 
 @dataclass
+class PanelApprovedProposalEvent(SystemEvent):
+    """
+    Emitted by PanelDecisionGroup (Layer B+C) when the 20-trader panel
+    and FinalDecisionGroup both approve a CandidateTradeProposal.
+
+    RiskLeverageGroup subscribes to this event instead of CandidateTradeEvent.
+    This enforces the 3-layer architecture: all proposals must pass Layer B+C
+    before reaching risk evaluation.
+
+    Fields:
+      proposal       — original CandidateTradeProposal from EntryGroup
+      panel_approve_count — number of "approve" votes (out of 20)
+      panel_avg_score     — average trader score (1–10)
+      panel_decision      — always "enter" when this event is published
+      packet_id           — ID of the archived BTCSetupPacket
+      panel_id            — ID of the archived PanelSummary
+      decision_id         — ID of the archived FinalDecision
+    """
+    proposal: Optional[CandidateTradeProposal] = None
+    panel_approve_count: int = 0
+    panel_avg_score: float = 0.0
+    panel_decision: str = "enter"   # always "enter"; hold decisions are swallowed
+    packet_id: str = ""
+    panel_id: str = ""
+    decision_id: str = ""
+
+
+@dataclass
 class RiskDecisionEvent(SystemEvent):
     """Risk Engine has made a final decision on a proposal."""
     approved: bool = False
