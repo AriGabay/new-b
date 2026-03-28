@@ -489,7 +489,12 @@ class RiskParityEvaluator(BaseTraderEvaluator):
         stop_pct = proposal.stop_distance_pct
 
         # Score based on R:R
-        score = min(9.0, rr * 1.5)
+        # Formula: 3.0 + rr*2.0 so that R:R=2.0 → 7.0 (approve-range),
+        # R:R=1.5 → 6.0 (abstain), R:R=1.0 → 5.0.
+        # The original formula (rr*1.5) gave score=3.0 for R:R=2.0 while
+        # simultaneously voting "approve" — an incoherent combination that
+        # dragged the panel avg below the 6.5 threshold for good setups.
+        score = min(9.0, 3.0 + rr * 2.0)
 
         # Stop width concern
         stop_concern = "none"
@@ -971,6 +976,16 @@ class DrawdownRiskEvaluator(BaseTraderEvaluator):
             score -= 2.0
             exec_concern = "stop will be triggered by normal volatility noise"
 
+        # Positive reward for excellent risk management.
+        # Without this, DrawdownRisk has zero positive adjustments and caps at 5.0
+        # (permanent abstain) even for trades with outstanding R:R and tight stops —
+        # an incoherent design where good risk management earns the same score as
+        # mediocre risk management.
+        if rr >= 2.5 and stop_pct <= 3.0:
+            score += 1.5   # excellent R:R with controlled stop → approve-range
+        elif rr >= 2.0 and stop_pct <= 3.0:
+            score += 0.5   # good R:R → lift toward approval zone
+
         score = max(1.0, score)
         # Re-evaluate vote after adjustments
         if vote != "reject":
@@ -1073,6 +1088,23 @@ class PatternCompletionEvaluator(BaseTraderEvaluator):
     def evaluate(self, packet: "BTCSetupPacket") -> TraderVerdict:
         cp = packet.chart_pattern
         direction = self._direction_str(packet)
+
+        # Architecture-aware: if ChartPatternGroup is not active (not in
+        # groups_contributed), abstain neutrally instead of penalising with
+        # score=4.0.  An empty confirmed_patterns list when the group is
+        # EXCLUDED is not evidence of "no pattern" — it means the capability
+        # was never run.  Penalising a missing capability as if it were a
+        # present-but-failed capability is architecturally incorrect.
+        if "chart_pattern" not in packet.groups_contributed:
+            return self._make_verdict(
+                5.0, "abstain", 0.3,
+                "Chart pattern capability is not active in current architecture phase.",
+                "No chart pattern evidence available — ChartPatternGroup is excluded.",
+                "none", "none",
+                "PatternCompletion abstains: ChartPatternGroup is not wired in Phase 3. "
+                "The absence of pattern data is a capability gap, not a negative signal. "
+                "This evaluator will score normally when ChartPatternGroup is activated.",
+            )
 
         if cp.confirmed_patterns:
             score = 8.0
