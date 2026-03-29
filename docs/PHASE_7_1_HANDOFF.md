@@ -126,11 +126,14 @@ are needed. Specifically:
 
 ## POST-FIX BASELINE
 
-| Fixture | Opens | Closes | Trades | Best Approve | Category |
-|---------|-------|--------|--------|-------------|----------|
-| btc_double_bottom_long_v1 | 1 | 0 | 0 | 16/20 | ENTER (open, +1.495R) |
-| btc_w_bottom_long_v2 | 1 | 0 | 0 | 14/20 | ENTER (open, flat) |
-| btc_bull_continuation_pullback_v1 | 2 | 2 | 2 | 14/20 | ENTER (2 wins: +0.094R, +0.262R) |
-| 8 other fixtures | 0 | 0 | 0 | 9-13/20 | HOLD |
+All fixtures use 1h timeframe (1 bar = 1 hour).
 
-**Closed trade summary:** 2 wins (+0.094R, +0.262R), 0 losses. Win rate: 100%.
+| Fixture | Bars (Duration) | Opens | Closes | Trades | Best Approve | Category |
+|---------|-----------------|-------|--------|--------|-------------|----------|
+| btc_double_bottom_long_v1 | 260 (10d 20h) | 1 | 0 | 0 | 16/20 | ENTER (open 11 bars / 11h, +1.495R) |
+| btc_w_bottom_long_v2 | 260 (10d 20h) | 1 | 0 | 0 | 14/20 | ENTER (open 11 bars / 11h, flat) |
+| btc_bull_continuation_pullback_v1 | 320 (13d 8h) | 2 | 2 | 2 | 14/20 | ENTER (wins: +0.094R@16 bars/16h, +0.262R@10 bars/10h) |
+| 8 other fixtures | 200-350 (8-14d) | 0 | 0 | 0 | 9-13/20 | HOLD |
+
+**Closed trade summary:** 2 wins (+0.094R after 16 hours, +0.262R after 10 hours), 0 losses. Win rate: 100%.
+**Time stop threshold:** 20 bars (20 hours) — not reached by any trade.

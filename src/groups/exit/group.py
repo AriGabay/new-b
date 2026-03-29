@@ -292,8 +292,11 @@ class ExitGroup(BaseGroup):
                 final_position=position,
             )
         )
+        from utils.bar_duration import format_bars
+        tf = getattr(position, "timeframe", "1h") or "1h"
         logger.info(
-            "Position %s closed: %s at %s. PnL: $%.2f (%.2fR)",
+            "Position %s closed: %s at %s after %s. PnL: $%.2f (%.2fR)",
             position.position_id, exit_signal.exit_reason.value,
-            exit_signal.exit_price, exit_signal.pnl_usd, exit_signal.pnl_r,
+            exit_signal.exit_price, format_bars(exit_signal.bars_held, tf),
+            exit_signal.pnl_usd, exit_signal.pnl_r,
         )

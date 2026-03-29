@@ -11,21 +11,24 @@ the change is rejected.
 
 ## FULL BASELINE TABLE
 
-| Fixture | Bars | Candidates | Approvals | Best Approve | Avg Score | Opens | Closes | Trades | Category |
-|---------|------|-----------|-----------|-------------|-----------|-------|--------|--------|----------|
-| btc_double_bottom_long_v1 | 260 | 6 | 1 | 16/20 | 7.325 | 1 | 1 | 1 | Strong ENTER |
-| btc_w_bottom_long_v2 | 260 | 6 | 1 | 14/20 | 6.850 | 1 | 0 | 0 | Threshold ENTER |
-| btc_bull_continuation_pullback_v1 | 320 | 3 | 2 | 14/20 | 6.725 | 2 | 2 | 2 | Threshold ENTER |
-| btc_long_established_trend_v1 | 300 | 7 | 0 | 13/20 | 6.700 | 0 | 0 | 0 | Near-miss HOLD |
-| btc_m_top_short_v1 | 267 | 8 | 0 | 13/20 | 6.700 | 0 | 0 | 0 | Near-miss HOLD |
-| btc_w_bottom_long_v1 | 257 | 6 | 0 | 13/20 | 6.700 | 0 | 0 | 0 | Near-miss HOLD |
-| btc_triple_touch_long_v1 | 261 | 5 | 0 | 13/20 | 6.575 | 0 | 0 | 0 | Near-miss HOLD |
-| btc_bull_breakout_v1 | 350 | 6 | 0 | 11/20 | 6.450 | 0 | 0 | 0 | Clear HOLD |
-| btc_bear_continuation_pullback_v1 | 330 | 7 | 0 | 10/20 | 6.300 | 0 | 0 | 0 | Clear HOLD |
-| btc_bear_breakdown_v1 | 350 | 2 | 0 | 9/20 | 6.200 | 0 | 0 | 0 | Strong HOLD |
-| btc_ranging_v1 | 200 | 2 | 0 | 9/20 | 6.250 | 0 | 0 | 0 | Strong HOLD |
+All fixtures use 1h timeframe. 1 bar = 1 hour.
+
+| Fixture | Bars (Duration) | Cand | Appr | Best | AvgSc | Opens | Closes | Trades | Category |
+|---------|----------------|------|------|------|-------|-------|--------|--------|----------|
+| btc_double_bottom_long_v1 | 260 (10d 20h) | 6 | 1 | 16/20 | 7.325 | 1 | 0 | 0 | Strong ENTER |
+| btc_w_bottom_long_v2 | 260 (10d 20h) | 6 | 1 | 14/20 | 6.850 | 1 | 0 | 0 | Threshold ENTER |
+| btc_bull_continuation_pullback_v1 | 320 (13d 8h) | 3 | 2 | 14/20 | 6.725 | 2 | 2 | 2 | Threshold ENTER |
+| btc_long_established_trend_v1 | 300 (12d 12h) | 7 | 0 | 13/20 | 6.700 | 0 | 0 | 0 | Near-miss HOLD |
+| btc_m_top_short_v1 | 267 (11d 3h) | 8 | 0 | 13/20 | 6.700 | 0 | 0 | 0 | Near-miss HOLD |
+| btc_w_bottom_long_v1 | 257 (10d 17h) | 6 | 0 | 13/20 | 6.700 | 0 | 0 | 0 | Near-miss HOLD |
+| btc_triple_touch_long_v1 | 261 (10d 21h) | 5 | 0 | 13/20 | 6.575 | 0 | 0 | 0 | Near-miss HOLD |
+| btc_bull_breakout_v1 | 350 (14d 14h) | 6 | 0 | 11/20 | 6.450 | 0 | 0 | 0 | Clear HOLD |
+| btc_bear_continuation_pullback_v1 | 330 (13d 18h) | 7 | 0 | 10/20 | 6.300 | 0 | 0 | 0 | Clear HOLD |
+| btc_bear_breakdown_v1 | 350 (14d 14h) | 2 | 0 | 9/20 | 6.200 | 0 | 0 | 0 | Strong HOLD |
+| btc_ranging_v1 | 200 (8d 8h) | 2 | 0 | 9/20 | 6.250 | 0 | 0 | 0 | Strong HOLD |
 
 **Summary:** 3 entering, 8 holding. Entry rate = 27%.
+**Time stop threshold:** 20 bars (20 hours).
 
 ---
 

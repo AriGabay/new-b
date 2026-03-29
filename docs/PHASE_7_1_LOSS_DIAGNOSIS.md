@@ -24,13 +24,13 @@ Entry bar 249:
 Stop price:  69301.2
 Bar low:     69288.8   ← 12.4 points below stop
 
-Result: immediate stop-loss at bars_held=0, PnL=-0.184R
+Result: immediate stop-loss at bars_held=0 (0 hours), PnL=-0.184R
 
-Actual price trajectory after entry:
-  bar+1:  70600 (+0.000R)
-  bar+5:  71543 (+0.726R)
-  bar+7:  71942 (+1.033R)   ← trailing stop would activate here
-  bar+10: 72541 (+1.495R)   ← fixture ends, position at +1.495R
+Actual price trajectory after entry (1h timeframe):
+  bar+1  (+1h):  70600 (+0.000R)
+  bar+5  (+5h):  71543 (+0.726R)
+  bar+7  (+7h):  71942 (+1.033R)   ← trailing stop would activate here
+  bar+10 (+10h): 72541 (+1.495R)   ← fixture ends, position at +1.495R
 
 MFE (max favorable excursion): +1.655R
 MAE (max adverse excursion):   +0.167R
@@ -42,8 +42,8 @@ The trade was a clear winner. The false stop destroyed it.
 
 ## SCALE OF THE BUG
 
-**42/42 recorded outcomes in the journal DB had bars_held=0 and exit_reason=stop_loss.**
-Every single historical trade outcome was a false entry-bar stop.
+**42/42 recorded outcomes in the journal DB had bars_held=0 (0 hours held) and exit_reason=stop_loss.**
+Every single historical trade outcome was a false entry-bar stop — exited instantly on the same bar.
 
 The 0% win rate and -0.184 avg pnl_r that drove Phase 7's decision to defer tuning
 was entirely caused by this one bug.
@@ -69,12 +69,14 @@ checks are skipped. This is correct because:
 
 ### Trade-by-trade
 
-| Fixture | Direction | Entry | Exit Reason | Bars Held | PnL_r | MFE | MAE | Outcome |
-|---------|-----------|-------|-------------|-----------|-------|-----|-----|---------|
-| btc_double_bottom_long_v1 | LONG | 70600 | OPEN | 11 | +1.495R | 1.655R | 0.167R | WIN |
-| btc_w_bottom_long_v2 | LONG | 70500 | OPEN | 11 | +0.026R | 0.200R | 0.621R | FLAT |
-| btc_bull_continuation_pullback_v1 #1 | LONG | 62800 | trailing_stop | 16 | +0.094R | 13.562R | 0.182R | WIN |
-| btc_bull_continuation_pullback_v1 #2 | LONG | 64000 | target_reached | 10 | +0.262R | 14.218R | 0.212R | WIN |
+All trades use 1h timeframe. 1 bar = 1 hour.
+
+| Fixture | Direction | Entry | Exit Reason | Bars Held (Elapsed) | PnL_r | MFE | MAE | Outcome |
+|---------|-----------|-------|-------------|---------------------|-------|-----|-----|---------|
+| btc_double_bottom_long_v1 | LONG | 70600 | OPEN | 11 bars (11 hours) | +1.495R | 1.655R | 0.167R | WIN |
+| btc_w_bottom_long_v2 | LONG | 70500 | OPEN | 11 bars (11 hours) | +0.026R | 0.200R | 0.621R | FLAT |
+| btc_bull_continuation_pullback_v1 #1 | LONG | 62800 | trailing_stop | 16 bars (16 hours) | +0.094R | 13.562R | 0.182R | WIN |
+| btc_bull_continuation_pullback_v1 #2 | LONG | 64000 | target_reached | 10 bars (10 hours) | +0.262R | 14.218R | 0.212R | WIN |
 
 ### Summary
 

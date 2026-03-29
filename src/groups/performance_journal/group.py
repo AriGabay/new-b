@@ -187,12 +187,15 @@ class PerformanceJournalGroup(BaseGroup):
             # publishing PositionCloseEvent. Calling it again here would double-count
             # PnL (equity += pnl twice) and double-increment total_trades.
             # This group's responsibility is journal logging only.
+            from utils.bar_duration import format_bars
+            tf = getattr(event.final_position, "timeframe", "1h") or "1h"
             logger.info(
-                "PerformanceJournalGroup: trade closed — %s PnL=$%.2f (%.2fR) reason=%s",
+                "PerformanceJournalGroup: trade closed — %s PnL=$%.2f (%.2fR) reason=%s held=%s",
                 event.final_position.symbol,
                 event.exit_signal.pnl_usd,
                 event.exit_signal.pnl_r,
                 event.exit_signal.exit_reason,
+                format_bars(event.exit_signal.bars_held, tf),
             )
         except Exception as exc:
             logger.warning("PerformanceJournalGroup: failed to log position close: %s", exc)

@@ -75,17 +75,20 @@ sufficient continuation bars.
 
 ### Time Stop
 
-- Not triggered in any trade. All exits occur before 20 bars. Time stop is available
-  as a safety net but not a factor in current outcomes.
+- Threshold: 20 bars (20 hours on 1h timeframe)
+- Not triggered in any trade. All exits occur before 20 bars (20 hours).
+  Time stop is available as a safety net but not a factor in current outcomes.
 
 ---
 
 ## OVERALL VERDICT
 
-| Exit Component | Status | Assessment |
-|---------------|--------|-----------|
-| Hard stop loss | FIXED (entry-bar bug) | Now works correctly on post-entry bars |
-| Target | Working | Clean target hit observed |
-| Trailing stop | Working but conservative | Captures small fraction of MFE; tune in Phase 7 |
-| Time stop | Working (not triggered) | Available as safety net |
-| Signal reversal | Not triggered | Advisory only, not a factor |
+All durations below assume the 1h timeframe (1 bar = 1 hour).
+
+| Exit Component | Status | Threshold | Assessment |
+|---------------|--------|-----------|-----------|
+| Hard stop loss | FIXED (entry-bar bug) | price crosses stop | Now works correctly on post-entry bars |
+| Target | Working | 2R from entry | Clean target hit at 10 bars (10 hours) observed |
+| Trailing stop | Working but conservative | activate at +1R, trail at close-2*ATR | Captures small fraction of MFE; tune in Phase 7 |
+| Time stop | Working (not triggered) | 20 bars (20 hours) | Available as safety net |
+| Signal reversal | Not triggered | — | Advisory only, not a factor |

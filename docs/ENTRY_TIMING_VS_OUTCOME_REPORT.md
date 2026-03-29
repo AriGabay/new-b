@@ -5,6 +5,8 @@
 
 ## FINDING: Entry timing is GOOD across all fixtures
 
+All fixtures use 1h timeframe (1 bar = 1 hour).
+
 Every entry occurs at the correct signal bar, and the subsequent price action moves
 favorably. There is no evidence of late entry, exhaustion-bar entry, or poor timing.
 

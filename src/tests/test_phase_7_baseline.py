@@ -25,6 +25,7 @@ from typing import List, Optional
 @dataclass
 class FixtureBaselineResult:
     fixture_name: str
+    timeframe: str = "1h"
     bar_count: int = 0
     candidate_events: int = 0
     approved_events: int = 0
@@ -290,30 +291,35 @@ class TestBaselineReport:
 
     def test_print_full_baseline(self, capsys):
         """Run ALL fixtures and print summary table. Always passes."""
+        from utils.bar_duration import bars_to_duration
+
         baselines = _get_all_baselines()
 
         header = (
-            f"{'Fixture':<35} {'Bars':>5} {'Cand':>5} {'Appr':>5} "
+            f"{'Fixture':<35} {'Bars':>5} {'Duration':>12} {'Cand':>5} {'Appr':>5} "
             f"{'Best':>5} {'AvgSc':>6} {'Opens':>5} {'Close':>5} {'Trades':>6}"
         )
-        print("\n" + "=" * 95)
+        print("\n" + "=" * 110)
         print("PHASE 7 BASELINE — Locked Regression Contract")
-        print("=" * 95)
+        print("All fixtures use 1h timeframe: 1 bar = 1 hour")
+        print("=" * 110)
         print(header)
-        print("-" * 95)
+        print("-" * 110)
 
         for name in sorted(baselines.keys()):
             r = baselines[name]
+            dur = bars_to_duration(r.bar_count, r.timeframe)
             print(
-                f"{r.fixture_name:<35} {r.bar_count:>5} {r.candidate_events:>5} "
+                f"{r.fixture_name:<35} {r.bar_count:>5} {dur:>12} {r.candidate_events:>5} "
                 f"{r.approved_events:>5} {r.best_approve_count:>5} "
                 f"{r.best_avg_score:>6.3f} {r.position_opens:>5} "
                 f"{r.position_closes:>5} {r.total_trades:>6}"
             )
 
-        print("=" * 95)
+        print("=" * 110)
         print(f"Total fixtures: {len(baselines)}")
         entering = sum(1 for r in baselines.values() if r.approved_events > 0)
         holding = sum(1 for r in baselines.values() if r.approved_events == 0)
         print(f"Entering: {entering}  |  Holding: {holding}")
-        print("=" * 95)
+        print(f"Time stop threshold: 20 bars (20 hours)")
+        print("=" * 110)

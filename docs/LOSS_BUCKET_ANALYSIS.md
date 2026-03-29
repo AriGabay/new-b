@@ -29,11 +29,15 @@
 
 | Trade / Setup | Source | Entry Quality | Stop Quality | Target Quality | Exit Reason | Likely Root Cause | Fixture Artifact? | Confidence | Notes |
 |--------------|--------|---------------|-------------|---------------|-------------|-------------------|--------------------|-----------|-------|
-| V3 double_bottom (pre-fix) | event_driven_runtime | GOOD (MFE=1.655R) | GOOD (2*ATR) | GOOD (2R) | FALSE STOP (bars_held=0) | Entry-bar wick check | NO — system bug | 100% | Fixed |
-| V3 double_bottom (post-fix) | event_driven_runtime | GOOD | GOOD | GOOD | OPEN (+1.495R) | N/A — winning | N/A | 100% | Fixture too short for target |
-| V2 w_bottom | event_driven_runtime | MARGINAL (MFE=0.200R) | GOOD (2*ATR) | AMBITIOUS (3.8R target) | OPEN (flat) | Insufficient continuation | YES — fixture short | 80% | Only 19 bars post-entry |
-| bull_cont #1 | event_driven_runtime | GOOD (MFE=13.56R) | GOOD | GOOD | trailing_stop +0.094R | Good trade management | N/A | 100% | Trailing activated then caught |
-| bull_cont #2 | event_driven_runtime | GOOD (MFE=14.22R) | GOOD | GOOD | target_reached +0.262R | Target hit naturally | N/A | 100% | Clean 2R target |
+All trades use 1h timeframe (1 bar = 1 hour).
+
+| Trade / Setup | Source | Entry Quality | Stop Quality | Target Quality | Exit Reason | Hold Time | Likely Root Cause | Fixture Artifact? | Confidence | Notes |
+|--------------|--------|---------------|-------------|---------------|-------------|-----------|-------------------|--------------------|-----------|-------|
+| V3 double_bottom (pre-fix) | event_driven_runtime | GOOD (MFE=1.655R) | GOOD (2*ATR) | GOOD (2R) | FALSE STOP (0 bars / 0h) | 0 bars (0h) | Entry-bar wick check | NO — system bug | 100% | Fixed |
+| V3 double_bottom (post-fix) | event_driven_runtime | GOOD | GOOD | GOOD | OPEN (+1.495R) | 11 bars (11h) | N/A — winning | N/A | 100% | Fixture too short for target |
+| V2 w_bottom | event_driven_runtime | MARGINAL (MFE=0.200R) | GOOD (2*ATR) | AMBITIOUS (3.8R target) | OPEN (flat) | 11 bars (11h) | Insufficient continuation | YES — fixture short | 80% | Only 19 bars (19h) post-entry |
+| bull_cont #1 | event_driven_runtime | GOOD (MFE=13.56R) | GOOD | GOOD | trailing_stop +0.094R | 16 bars (16h) | Good trade management | N/A | 100% | Trailing activated then caught |
+| bull_cont #2 | event_driven_runtime | GOOD (MFE=14.22R) | GOOD | GOOD | target_reached +0.262R | 10 bars (10h) | Target hit naturally | N/A | 100% | Clean 2R target |
 
 ---
 

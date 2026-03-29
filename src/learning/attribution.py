@@ -81,21 +81,21 @@ class ErrorTaxonomy:
         if regime == "bear" and direction == "LONG":
             return ("D", "regime_mismatch: long in bear regime")
 
-        # B: stop placement — stopped out very quickly (<=3 bars)
+        # B: stop placement — stopped out very quickly (<=3 bars / 3 hours on 1h)
         if exit_reason == "stop_loss" and bars_held <= 3:
-            return ("B", "stop_placement: stopped within 3 bars (likely noise)")
+            return ("B", f"stop_placement: stopped within {bars_held} bars (likely noise)")
 
-        # A: entry timing — stopped out but took many bars
+        # A: entry timing — stopped out but took many bars (>15 bars / 15+ hours on 1h)
         if exit_reason == "stop_loss" and bars_held > 15:
-            return ("A", "entry_timing: slow bleed to stop, possible late entry")
+            return ("A", f"entry_timing: slow bleed to stop over {bars_held} bars, possible late entry")
 
         # E: signal quality — low composite score on entry
         if composite_score is not None and composite_score < 0.55:
             return ("E", f"signal_quality: low composite_score={composite_score:.2f}")
 
-        # C: target — time stop after many bars (position never hit target)
+        # C: target — time stop after many bars (>=18 bars / 18+ hours on 1h)
         if exit_reason == "time_stop" and bars_held >= 18:
-            return ("C", "target_too_far: time stop triggered, target never reached")
+            return ("C", f"target_too_far: time stop at {bars_held} bars, target never reached")
 
         return ("G", "unknown: insufficient data to classify")
 

@@ -61,9 +61,16 @@ class ReplaySequenceSummary:
     bars_run: int
     positions_opened: int
     final_open_positions: int
+    timeframe: str = "1h"
     bar_results: list[ReplayBarResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     note: str = ""
+
+    @property
+    def duration_display(self) -> str:
+        """Human-readable elapsed time for the replay run."""
+        from utils.bar_duration import bars_to_duration
+        return bars_to_duration(self.bars_run, self.timeframe)
 
 
 class RuntimeReplayHarness:
@@ -207,9 +214,11 @@ class RuntimeReplayHarness:
                 f"{summary.bars_run} bars. Panel + risk gates passed."
             )
 
+        from utils.bar_duration import format_bars
         logger.info(
-            "Harness [%s]: %d bars run, %d positions opened, %d open at end.",
-            label, summary.bars_run, summary.positions_opened, summary.final_open_positions,
+            "Harness [%s]: %s run, %d positions opened, %d open at end.",
+            label, format_bars(summary.bars_run, summary.timeframe),
+            summary.positions_opened, summary.final_open_positions,
         )
         return summary
 
@@ -270,10 +279,12 @@ def make_replay_summary_report(summaries: list[ReplaySequenceSummary]) -> dict:
     seqs_with_positions = sum(1 for s in summaries if s.positions_opened > 0)
     total_errors = sum(len(s.errors) for s in summaries)
 
+    from utils.bar_duration import bars_to_duration
     per_sequence = [
         {
             "label": s.label,
             "bars_run": s.bars_run,
+            "duration": s.duration_display,
             "positions_opened": s.positions_opened,
             "final_open_positions": s.final_open_positions,
             "errors": s.errors,

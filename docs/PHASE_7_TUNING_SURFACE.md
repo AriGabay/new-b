@@ -25,7 +25,7 @@
 | **Risk: DAILY_LOSS_LIMIT** | -0.02 (-2%) | TIGHTEN ONLY | paper simulation | LOW | Never loosen without justification | RiskLeverageGroup | |
 | **Risk: MAX_DRAWDOWN_HALT** | 0.10 (10%) | TIGHTEN ONLY | paper simulation | LOW | Never loosen without justification | RiskLeverageGroup | |
 | **Risk: PUMP_VOLUME_RATIO** | 5.0 | YES | fixture replay | LOW | Range 3.0-7.0 | RiskLeverageGroup | |
-| **Exit: time_stop_bars** | 20 | YES | fixture replay + outcomes | LOW | Range 15-30 | ExitGroup | |
+| **Exit: time_stop_bars** | 20 bars (20 hours on 1h) | YES | fixture replay + outcomes | LOW | Range 15-30 bars (15-30 hours on 1h) | ExitGroup | |
 | **Exit: trailing_ATR_mult** | 2.0 | YES | fixture replay + outcomes | MEDIUM | Range 1.5-3.0 | ExitGroup | |
 | **Exit: trailing_activation** | +1R | YES | fixture replay + outcomes | MEDIUM | Range +0.5R to +2R | ExitGroup | |
 | **Evaluator scoring logic** | varies per evaluator | NOT YET — need calibration data | outcome attribution with trader_calibration | HIGH | Min 50 outcomes per evaluator before changes | evaluators.py | trader_calibration now working but empty |

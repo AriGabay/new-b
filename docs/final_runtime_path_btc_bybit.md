@@ -129,7 +129,7 @@ FeatureReadyEvent received by ExitGroup._check_exits(fv)
     → _check_stop_loss(position, fv)
     → _check_target(position, fv)
     → _check_trailing_stop(position, fv)
-    → bars_held >= 20 → time stop
+    → bars_held >= 20 (20 hours on 1h) → time stop
   → if exit triggered:
     → _compute_pnl(position, exit_price)
     → state.close_position(position_id, pnl_usd)

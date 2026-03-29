@@ -103,6 +103,16 @@ class JournalReader:
             logger.warning("JournalReader query failed: %s | sql=%s", e, sql[:80])
             return []
 
+    @staticmethod
+    def _enrich_trade_with_elapsed_time(trade: dict) -> dict:
+        """Add hold_duration field to trade dict based on bars_held and timeframe."""
+        from utils.bar_duration import format_bars
+        bars = trade.get("bars_held")
+        tf = trade.get("timeframe") or "1h"
+        if bars is not None:
+            trade["hold_duration"] = format_bars(int(bars), tf)
+        return trade
+
     # -----------------------------------------------------------------------
     # Base journal tables
     # -----------------------------------------------------------------------
@@ -110,23 +120,28 @@ class JournalReader:
     def get_trades(self, limit: int = 50, offset: int = 0,
                    outcome: Optional[str] = None) -> list[dict]:
         if outcome:
-            return self._query(
+            rows = self._query(
                 "SELECT * FROM trades WHERE outcome=? ORDER BY opened_at DESC LIMIT ? OFFSET ?",
                 (outcome, limit, offset),
             )
-        return self._query(
-            "SELECT * FROM trades ORDER BY opened_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        )
+        else:
+            rows = self._query(
+                "SELECT * FROM trades ORDER BY opened_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+        return [self._enrich_trade_with_elapsed_time(r) for r in rows]
 
     def get_trade(self, trade_id: str) -> Optional[dict]:
         rows = self._query("SELECT * FROM trades WHERE trade_id=?", (trade_id,))
-        return rows[0] if rows else None
+        if rows:
+            return self._enrich_trade_with_elapsed_time(rows[0])
+        return None
 
     def get_open_trades(self) -> list[dict]:
-        return self._query(
+        rows = self._query(
             "SELECT * FROM trades WHERE closed_at IS NULL ORDER BY opened_at DESC"
         )
+        return [self._enrich_trade_with_elapsed_time(r) for r in rows]
 
     def get_signals(self, limit: int = 50, offset: int = 0,
                     group_id: Optional[str] = None) -> list[dict]:

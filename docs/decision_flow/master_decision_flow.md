@@ -448,7 +448,7 @@ EXIT TRIGGERS (checked in priority order):
      Type: "trailing_stop"
 
   4. TIME STOP:
-     if bars_held > config.max_bars_in_trade  [default: 20 daily bars]
+     if bars_held > config.max_bars_in_trade  [default: 20 bars = 20 hours on 1h timeframe]
      → EXIT at close
      Type: "time_stop"
 

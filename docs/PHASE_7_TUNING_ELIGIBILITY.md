@@ -186,16 +186,16 @@ All new fixtures must undergo the same integrity checks as existing ones
 
 ### 8. ExitGroup Trailing Stop Parameters
 
-| Parameter | Current Value | Location |
-|-----------|--------------|----------|
-| Trailing activation | +1R favorable | src/groups/exit/group.py |
-| Trailing ATR multiplier | 2.0 | src/groups/exit/group.py |
-| Time stop bars | 20 | src/groups/exit/group.py |
+| Parameter | Current Value | Elapsed Time (1h timeframe) | Location |
+|-----------|--------------|---------------------------|----------|
+| Trailing activation | +1R favorable | — | src/groups/exit/group.py |
+| Trailing ATR multiplier | 2.0 | — | src/groups/exit/group.py |
+| Time stop bars | 20 bars | 20 hours | src/groups/exit/group.py |
 
 **Safe tuning range:**
 - Trailing activation: +0.5R–+2R
 - ATR multiplier: 1.5–3.0
-- Time stop: 15–30 bars
+- Time stop: 15–30 bars (15–30 hours on 1h timeframe)
 
 ---
 
