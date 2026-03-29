@@ -25,9 +25,13 @@ Endpoints:
   GET  /api/replay/results          → all replay run results
   POST /api/replay/run              → start replay run
   GET  /api/replay/result/{run_id}  → specific replay result
-  POST /api/actions/start_runner    → start runner
-  POST /api/actions/stop_runner     → stop runner
-  WS   /ws/events                   → real-time event stream
+  GET  /api/optimization/parameters  → tunable parameter space
+  POST /api/optimization/run         → start walk-forward optimization
+  GET  /api/optimization/results     → all optimization results
+  GET  /api/optimization/result/{id} → specific optimization result
+  POST /api/actions/start_runner     → start runner
+  POST /api/actions/stop_runner      → stop runner
+  WS   /ws/events                    → real-time event stream
 """
 from __future__ import annotations
 
@@ -374,6 +378,58 @@ async def replay_result(run_id: str):
     if r is None:
         return JSONResponse({"error": "run_id not found"}, status_code=404)
     return r
+
+
+# ─── Walk-Forward Optimization ────────────────────────────────────────────────
+
+@app.get("/api/optimization/parameters")
+async def optimization_parameters():
+    """Return available tunable parameters and their bounds."""
+    from optimization.parameter_space import PARAMETER_SPACE
+    return {
+        "parameters": [
+            {
+                "name": p.name,
+                "category": p.category,
+                "description": p.description,
+                "current_value": p.current_value,
+                "min_value": p.min_value,
+                "max_value": p.max_value,
+                "step": p.step,
+                "value_type": p.value_type,
+                "code_location": p.code_location,
+            }
+            for p in PARAMETER_SPACE
+        ]
+    }
+
+
+@app.post("/api/optimization/run")
+async def optimization_run(body: dict = None):
+    """Start a walk-forward optimization run."""
+    from optimization.walk_forward_runner import WalkForwardRunner
+    b = body or {}
+    param_names = b.get("param_names", ["composite_score_threshold"])
+    # WFO requires FeatureVector data — for now, return a stub
+    # until CSV data loading is integrated into the console
+    return JSONResponse(
+        {"error": "Walk-forward optimization requires CSV data. "
+         "Use the CLI runner or provide feature_vectors via API."},
+        status_code=501,
+    )
+
+
+@app.get("/api/optimization/results")
+async def optimization_results():
+    """Return all optimization run results."""
+    # Global runner instance — lazy init
+    return {"results": [], "message": "No optimization runs yet."}
+
+
+@app.get("/api/optimization/result/{run_id}")
+async def optimization_result(run_id: str):
+    """Return a specific optimization run result."""
+    return JSONResponse({"error": "run_id not found"}, status_code=404)
 
 
 # ─── Actions ──────────────────────────────────────────────────────────────────

@@ -37,6 +37,7 @@ TEST_FILES = [
     "src/tests/test_phase_6_4_double_bottom.py",
     "src/tests/test_phase_7_baseline.py",
     "src/tests/test_replay_manager.py",
+    "src/tests/test_walk_forward.py",
 ]
 
 
