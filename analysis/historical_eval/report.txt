@@ -1,0 +1,52 @@
+========================================================================
+  BTCUSDT HISTORICAL EVALUATION REPORT
+  Period: 2024-01-01 to 2025-12-31 | Timeframe: 1h
+========================================================================
+
+  Method:            RuntimeReplayHarness with real 10-group pipeline
+  Total bars:        17,544
+  Elapsed:           5.0s
+
+────────────────────────────────────────────────────────────────────────
+  ACCOUNT PERFORMANCE
+────────────────────────────────────────────────────────────────────────
+  Starting Balance:  $500.00
+  Ending Balance:    $495.82
+  Net P&L:           $-4.18
+  Return:            -0.84%
+  High Water Mark:   $500.00
+  Max Drawdown:      0.84%
+
+────────────────────────────────────────────────────────────────────────
+  TRADE STATISTICS
+────────────────────────────────────────────────────────────────────────
+  Total Trades:      64
+  Winners:           29
+  Losers:            35
+  Win Rate:          45.3%
+  Avg Trade P&L:     $-0.07
+  Avg Winner:        $0.50
+  Avg Loser:         $-0.54
+  Longest Losing:    6 streak
+  Open at End:       0
+
+────────────────────────────────────────────────────────────────────────
+  MONTHLY BREAKDOWN
+────────────────────────────────────────────────────────────────────────
+  Month          Trades   Wins   Losses      P&L ($)
+  ──────────── ──────── ────── ──────── ────────────
+  2026-03            64     29       35        -4.15
+
+────────────────────────────────────────────────────────────────────────
+  METHODOLOGY NOTES
+────────────────────────────────────────────────────────────────────────
+  - Full 10-group event-driven pipeline (not simplified backtest)
+  - Real 20-trader panel evaluation with 14/20 consensus threshold
+  - Real 9-rule risk gate (RiskLeverageGroup)
+  - Real exit logic (ExitGroup: stop/target/time exits)
+  - 200-bar warmup for indicator computation (FeatureComputer)
+  - No forced approvals, no look-ahead, no curve fitting
+  - Position sizing: 1% risk per trade, max 3x leverage
+  - Data source: Bybit V5 public API (BTCUSDT perpetual, 1h)
+
+========================================================================

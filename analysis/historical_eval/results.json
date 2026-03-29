@@ -1,0 +1,36 @@
+{
+  "method": "full_pipeline_replay",
+  "method_detail": "RuntimeReplayHarness with real 10-group pipeline",
+  "eval_start": "2024-01-01",
+  "eval_end": "2025-12-31",
+  "initial_equity": 500.0,
+  "final_equity": 495.8210604871164,
+  "pnl_usd": -4.18,
+  "return_pct": -0.84,
+  "total_bars": 17544,
+  "total_trades": 64,
+  "positions_opened_runtime": 62,
+  "positions_closed_runtime": 62,
+  "final_open_positions": 0,
+  "high_water_mark": 500.0,
+  "max_drawdown_pct": 0.8358,
+  "consecutive_losses_at_end": 0,
+  "elapsed_seconds": 5.0,
+  "db_path": "/var/folders/2n/vcn5c1291l96tkj159g8zwww0000gn/T/hist_eval_xpms7c4u/eval_2efeeb9d.db",
+  "winners": 29,
+  "losers": 35,
+  "win_rate": 45.3,
+  "avg_trade_pnl": -0.07,
+  "avg_winner": 0.5,
+  "avg_loser": -0.54,
+  "longest_losing_streak": 6,
+  "monthly_breakdown": {
+    "2026-03": {
+      "trades": 64,
+      "pnl": -4.15,
+      "wins": 29,
+      "losses": 35
+    }
+  },
+  "trade_count_detail": 64
+}
