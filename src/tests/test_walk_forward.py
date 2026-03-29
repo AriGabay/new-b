@@ -380,30 +380,16 @@ class TestObjective:
         from optimization.objective import RunMetrics, TradeResult
         if trades is None:
             trades = [
-                TradeResult(
-                    entry_price=Decimal("65000"),
-                    exit_price=Decimal("66000"),
-                    direction="long",
-                    r_multiple=1.5,
-                    bars_held=10,
-                    pnl_usd=1500.0,
-                ),
-                TradeResult(
-                    entry_price=Decimal("66000"),
-                    exit_price=Decimal("65500"),
-                    direction="long",
-                    r_multiple=-0.5,
-                    bars_held=5,
-                    pnl_usd=-500.0,
-                ),
-                TradeResult(
-                    entry_price=Decimal("65500"),
-                    exit_price=Decimal("66500"),
-                    direction="long",
-                    r_multiple=1.0,
-                    bars_held=8,
-                    pnl_usd=1000.0,
-                ),
+                TradeResult(entry_price=Decimal("65000"), exit_price=Decimal("66000"),
+                            direction="long", r_multiple=1.5, bars_held=10, pnl_usd=1500.0),
+                TradeResult(entry_price=Decimal("66000"), exit_price=Decimal("65500"),
+                            direction="long", r_multiple=-0.5, bars_held=5, pnl_usd=-500.0),
+                TradeResult(entry_price=Decimal("65500"), exit_price=Decimal("66500"),
+                            direction="long", r_multiple=1.0, bars_held=8, pnl_usd=1000.0),
+                TradeResult(entry_price=Decimal("66500"), exit_price=Decimal("67000"),
+                            direction="long", r_multiple=0.8, bars_held=6, pnl_usd=800.0),
+                TradeResult(entry_price=Decimal("67000"), exit_price=Decimal("66800"),
+                            direction="long", r_multiple=-0.3, bars_held=4, pnl_usd=-300.0),
             ]
         return RunMetrics(
             bars_run=bars_run,
@@ -430,19 +416,21 @@ class TestObjective:
 
     def test_win_rate_calculation(self):
         metrics = self._make_metrics()
-        assert metrics.wins == 2
-        assert metrics.losses == 1
-        assert abs(metrics.win_rate - 2/3) < 0.01
+        # 5 trades: 3 winners (1500, 1000, 800), 2 losers (-500, -300)
+        assert metrics.wins == 3
+        assert metrics.losses == 2
+        assert abs(metrics.win_rate - 3/5) < 0.01
 
     def test_expectancy_calculation(self):
         metrics = self._make_metrics()
-        expected = (1.5 + (-0.5) + 1.0) / 3
+        # R-multiples: 1.5, -0.5, 1.0, 0.8, -0.3
+        expected = (1.5 + (-0.5) + 1.0 + 0.8 + (-0.3)) / 5
         assert abs(metrics.expectancy - expected) < 0.01
 
     def test_profit_factor_calculation(self):
         metrics = self._make_metrics()
-        gross_profit = 1500 + 1000
-        gross_loss = 500
+        gross_profit = 1500 + 1000 + 800  # 3300
+        gross_loss = 500 + 300             # 800
         assert abs(metrics.profit_factor - gross_profit / gross_loss) < 0.01
 
     def test_drawdown_penalty_increases_with_drawdown(self):

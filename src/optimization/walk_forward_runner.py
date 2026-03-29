@@ -446,8 +446,16 @@ class WalkForwardRunner:
 
         # Feed bars
         positions_opened = 0
+        last_date = None
         try:
             for fv in feature_vectors:
+                # Reset daily PnL at date boundaries so the daily loss limit
+                # doesn't carry over and block all trades after a losing day.
+                bar_date = fv.timestamp.date() if fv.timestamp else None
+                if bar_date and bar_date != last_date:
+                    await runner.state.reset_daily_pnl()
+                    last_date = bar_date
+
                 before = len(runner.state.portfolio.open_positions)
                 await runner.simulate_bar(fv)
                 await asyncio.sleep(0)

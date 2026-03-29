@@ -11,8 +11,13 @@ Parameter categories:
   3. Panel thresholds (TraderEvaluatorPanel)
   4. Safety rails (FinalDecisionGroup)
   5. Risk parameters (RiskLeverageGroup)
-  6. Stop placement (ATRStopPlacer)
-  7. Exit parameters (ExitGroup)
+  6. Leverage parameters (RiskLeverageGroup)
+  7. Stop placement (ATRStopPlacer)
+  8. Exit parameters (ExitGroup)
+
+NOTE: As of the leverage-driven sizing model, position size is determined
+by leverage (5x-35x) rather than risk_fraction. The risk_fraction parameter
+is retained as a secondary/legacy reference but does not drive sizing.
 
 The grid search explores combinations within these bounds.
 Parameters are applied to the runner via ParameterOverride before each run.
@@ -166,7 +171,7 @@ PARAMETER_SPACE: list[Parameter] = [
     Parameter(
         name="risk_fraction",
         category="risk",
-        description="Fraction of equity risked per trade",
+        description="Fraction of equity risked per trade (secondary — leverage drives sizing)",
         current_value=0.01, min_value=0.005, max_value=0.02, step=0.005,
         value_type="float",
         code_location="groups/risk_leverage/group.py:72",
@@ -175,9 +180,35 @@ PARAMETER_SPACE: list[Parameter] = [
         name="daily_loss_limit",
         category="risk",
         description="Daily loss threshold to block new entries (negative)",
-        current_value=-0.02, min_value=-0.04, max_value=-0.01, step=0.005,
+        current_value=-0.20, min_value=-0.30, max_value=-0.10, step=0.05,
         value_type="float",
         code_location="groups/risk_leverage/group.py:74",
+    ),
+    Parameter(
+        name="max_drawdown_halt",
+        category="risk",
+        description="Max drawdown fraction before halting all trading",
+        current_value=0.40, min_value=0.25, max_value=0.50, step=0.05,
+        value_type="float",
+        code_location="groups/risk_leverage/group.py:75",
+    ),
+
+    # --- Leverage parameters ---
+    Parameter(
+        name="min_leverage",
+        category="leverage",
+        description="Minimum leverage multiplier for position sizing",
+        current_value=5.0, min_value=3.0, max_value=15.0, step=2.0,
+        value_type="float",
+        code_location="groups/risk_leverage/group.py:78",
+    ),
+    Parameter(
+        name="max_risk_per_trade",
+        category="leverage",
+        description="Maximum fraction of equity at risk per single trade",
+        current_value=0.10, min_value=0.05, max_value=0.20, step=0.05,
+        value_type="float",
+        code_location="groups/risk_leverage/group.py:81",
     ),
 
     # --- Stop placement ---
@@ -203,7 +234,7 @@ PARAMETER_SPACE: list[Parameter] = [
         name="time_stop_bars",
         category="exit",
         description="Maximum bars to hold before time-based exit",
-        current_value=20, min_value=10, max_value=40, step=5,
+        current_value=48, min_value=24, max_value=96, step=12,
         value_type="int",
         code_location="groups/exit/group.py:187",
     ),

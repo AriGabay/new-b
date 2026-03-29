@@ -37,8 +37,8 @@ WEIGHT_DRAWDOWN = 0.15
 
 # Thresholds
 MIN_TRADES_FOR_VALID_SCORE = 3
-MAX_DRAWDOWN_THRESHOLD = 0.05  # 5% — penalty kicks in above this
-IDEAL_TRADE_RATE_PER_1000_BARS = 5  # ~5 trades per 1000 bars is healthy
+MAX_DRAWDOWN_THRESHOLD = 0.25  # 25% — penalty kicks in above this (leveraged trading)
+IDEAL_TRADE_RATE_PER_1000_BARS = 3  # ~3 trades per 1000 bars (selective leveraged entries)
 
 
 @dataclass
@@ -185,7 +185,7 @@ def compute_objective(metrics: RunMetrics) -> ObjectiveResult:
     tc_score = _trade_count_score(trades_per_1000, IDEAL_TRADE_RATE_PER_1000_BARS)
 
     # Component 5: Drawdown penalty
-    # 0% dd → 1.0, 5% dd → 0.7, 10% dd → 0.3, 20% dd → 0.05
+    # 0% dd → 1.0, 25% dd → ~0.5, 40%+ dd → approaching 0
     dd_score = _drawdown_score(metrics.max_drawdown_pct)
 
     components = {
@@ -235,14 +235,17 @@ def _trade_count_score(trades_per_1000: float, ideal: float) -> float:
 
 def _drawdown_score(max_dd_pct: float) -> float:
     """
-    Score drawdown. 0% → 1.0, harsh penalty above threshold.
-    Uses exponential decay above MAX_DRAWDOWN_THRESHOLD.
+    Score drawdown using a sigmoid centered on MAX_DRAWDOWN_THRESHOLD.
+    0% DD → 1.0, 25% DD → ~0.5, 40%+ DD → approaching 0.
+
+    The steepness (k=12) is tuned so the transition from good to bad
+    is smooth but decisive around the threshold.
     """
     if max_dd_pct <= 0:
         return 1.0
-    if max_dd_pct <= MAX_DRAWDOWN_THRESHOLD:
-        # Linear decay: 0% → 1.0, threshold → 0.7
-        return 1.0 - 0.3 * (max_dd_pct / MAX_DRAWDOWN_THRESHOLD)
-    # Exponential decay above threshold
-    excess = max_dd_pct - MAX_DRAWDOWN_THRESHOLD
-    return 0.7 * math.exp(-5.0 * excess)
+    # Sigmoid: 1 / (1 + exp(k * (dd - threshold)))
+    # At dd=0:          exp(k * -0.25) ≈ small  → score ≈ 1.0
+    # At dd=threshold:  exp(0) = 1              → score = 0.5
+    # At dd=0.40:       exp(k * 0.15) ≈ large   → score ≈ 0.0
+    k = 12.0
+    return 1.0 / (1.0 + math.exp(k * (max_dd_pct - MAX_DRAWDOWN_THRESHOLD)))

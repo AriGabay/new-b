@@ -271,6 +271,8 @@ def _apply_overrides(runner, overrides: dict) -> None:
     Supported overrides (module-level constants):
       - Entry weights/thresholds: groups.entry.group module globals
       - Risk params: groups.risk_leverage.group module globals
+      - Leverage params: groups.risk_leverage.group module globals
+      - Exit time stop: groups.exit.group module globals
       - ATR stop: risk.sizing module globals
 
     Class-level overrides (via runner group instances):
@@ -279,10 +281,10 @@ def _apply_overrides(runner, overrides: dict) -> None:
     NOT YET OVERRIDABLE (inline hardcoded values):
       - Safety rails in FinalDecisionGroup.decide() (5.0, 12, 1.5)
       - Exit trailing stop multiplier (hardcoded `2 * features.atr14`)
-      - Exit time stop (hardcoded `bars_held >= 20`)
       These require a small refactor to extract into module-level constants.
     """
     import groups.entry.group as entry_mod
+    import groups.exit.group as exit_mod
     import groups.risk_leverage.group as risk_mod
     import risk.sizing as sizing_mod
     from decimal import Decimal
@@ -321,14 +323,26 @@ def _apply_overrides(runner, overrides: dict) -> None:
         elif name == "daily_loss_limit":
             risk_mod.DAILY_LOSS_LIMIT = value
 
+        # --- Leverage parameters (module-level constants) ---
+        elif name == "min_leverage":
+            risk_mod.MIN_LEVERAGE = float(value)
+        elif name == "max_risk_per_trade":
+            risk_mod.MAX_RISK_PER_TRADE = float(value)
+        elif name == "max_drawdown_halt":
+            risk_mod.MAX_DRAWDOWN_HALT = float(value)
+
+        # --- Time stop (module-level constants in exit + risk_leverage) ---
+        elif name == "time_stop_bars":
+            exit_mod.MAX_BARS_TO_HOLD = int(value)
+            risk_mod.DEFAULT_MAX_BARS = int(value)
+
         # --- ATR stop placement (module-level constant) ---
         elif name == "atr_stop_multiplier":
             sizing_mod.ATR_STOP_MULTIPLIER = Decimal(str(value))
 
         # --- Not yet overridable (logged as warning) ---
         elif name in ("safety_avg_score_floor", "safety_reject_ceiling",
-                       "safety_min_rr_ratio", "trailing_stop_atr_mult",
-                       "time_stop_bars"):
+                       "safety_min_rr_ratio", "trailing_stop_atr_mult"):
             logger.debug(
                 "regression_guard: override '%s' not yet supported "
                 "(requires inline constant extraction)", name
@@ -348,6 +362,7 @@ def _find_group(runner, group_class_name: str):
 def _save_module_state() -> dict:
     """Capture current module-level constants so they can be restored."""
     import groups.entry.group as entry_mod
+    import groups.exit.group as exit_mod
     import groups.risk_leverage.group as risk_mod
     import risk.sizing as sizing_mod
 
@@ -357,6 +372,11 @@ def _save_module_state() -> dict:
         "confirmation_gate": entry_mod.CONFIRMATION_GATE_MIN_GROUPS,
         "risk_fraction": risk_mod.DEFAULT_RISK_FRACTION,
         "daily_loss_limit": risk_mod.DAILY_LOSS_LIMIT,
+        "min_leverage": risk_mod.MIN_LEVERAGE,
+        "max_risk_per_trade": risk_mod.MAX_RISK_PER_TRADE,
+        "max_drawdown_halt": risk_mod.MAX_DRAWDOWN_HALT,
+        "default_max_bars": risk_mod.DEFAULT_MAX_BARS,
+        "max_bars_to_hold": exit_mod.MAX_BARS_TO_HOLD,
         "atr_stop_mult": sizing_mod.ATR_STOP_MULTIPLIER,
         "sizing_risk_fraction": sizing_mod.DEFAULT_RISK_FRACTION,
     }
@@ -365,6 +385,7 @@ def _save_module_state() -> dict:
 def _restore_module_state(state: dict) -> None:
     """Restore module-level constants from saved state."""
     import groups.entry.group as entry_mod
+    import groups.exit.group as exit_mod
     import groups.risk_leverage.group as risk_mod
     import risk.sizing as sizing_mod
 
@@ -373,5 +394,10 @@ def _restore_module_state(state: dict) -> None:
     entry_mod.CONFIRMATION_GATE_MIN_GROUPS = state["confirmation_gate"]
     risk_mod.DEFAULT_RISK_FRACTION = state["risk_fraction"]
     risk_mod.DAILY_LOSS_LIMIT = state["daily_loss_limit"]
+    risk_mod.MIN_LEVERAGE = state["min_leverage"]
+    risk_mod.MAX_RISK_PER_TRADE = state["max_risk_per_trade"]
+    risk_mod.MAX_DRAWDOWN_HALT = state["max_drawdown_halt"]
+    risk_mod.DEFAULT_MAX_BARS = state["default_max_bars"]
+    exit_mod.MAX_BARS_TO_HOLD = state["max_bars_to_hold"]
     sizing_mod.ATR_STOP_MULTIPLIER = state["atr_stop_mult"]
     sizing_mod.DEFAULT_RISK_FRACTION = state["sizing_risk_fraction"]

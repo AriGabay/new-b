@@ -222,6 +222,7 @@ def _parse_timestamp(ts_raw: str) -> datetime:
         "%Y-%m-%dT%H:%M:%SZ",
         "%Y-%m-%dT%H:%M:%S.%f+00:00",
         "%Y-%m-%dT%H:%M:%S+00:00",
+        "%Y-%m-%d %H:%M:%S+00:00",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M:%S.%f",
     ):
