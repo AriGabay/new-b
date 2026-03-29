@@ -91,6 +91,7 @@ class BtcBybitPaperRunner:
         self._market_data = None
         self._indicators = None
         self._candlestick = None
+        self._chart_pattern = None
         self._technical_structure = None
         self._entry = None
         self._panel_decision = None
@@ -147,6 +148,7 @@ class BtcBybitPaperRunner:
         from groups.market_data.group import MarketDataGroup
         from groups.indicators.group import IndicatorsGroup
         from groups.candlestick.group import CandlestickGroup
+        from groups.chart_pattern.group import ChartPatternGroup
         from groups.technical_structure.group import TechnicalStructureGroup
         from groups.entry.group import EntryGroup
         from groups.panel_decision.group import PanelDecisionGroup
@@ -159,6 +161,7 @@ class BtcBybitPaperRunner:
         self._market_data = MarketDataGroup(self._state, self._bus)
         self._indicators = IndicatorsGroup(self._state, self._bus)
         self._candlestick = CandlestickGroup(self._state, self._bus)
+        self._chart_pattern = ChartPatternGroup(self._state, self._bus)
         self._technical_structure = TechnicalStructureGroup(self._state, self._bus)
         self._entry = EntryGroup(self._state, self._bus)
         self._panel_decision = PanelDecisionGroup(self._state, self._bus)
@@ -168,7 +171,8 @@ class BtcBybitPaperRunner:
 
         self._all_groups = [
             self._market_data,
-            self._indicators,
+            self._chart_pattern,        # Must precede CandlestickGroup so cache is populated
+            self._indicators,           # before EntryGroup fires CandidateTradeEvent
             self._candlestick,
             self._technical_structure,
             self._entry,
@@ -181,6 +185,10 @@ class BtcBybitPaperRunner:
     def _wire_caches(self) -> None:
         """
         Inject cross-group cache references into PanelDecisionGroup and CandlestickGroup.
+
+        PanelDecisionGroup also needs:
+        - ChartPatternSignal cache (from ChartPatternGroup)
+        - active chart pattern name cache (from ChartPatternGroup)
 
         PanelDecisionGroup needs:
         - FeatureVector cache (from MarketDataGroup)
@@ -207,6 +215,14 @@ class BtcBybitPaperRunner:
         # Give CandlestickGroup reference to TechnicalStructureGroup
         if hasattr(self._candlestick, "set_technical_structure_group"):
             self._candlestick.set_technical_structure_group(self._technical_structure)
+
+        # Give PanelDecisionGroup access to ChartPatternGroup's signal and active caches
+        self._panel_decision.set_chart_pattern_signal_cache(
+            self._chart_pattern._signals_cache
+        )
+        self._panel_decision.set_active_chart_pattern_cache(
+            self._chart_pattern._active_cache
+        )
 
         logger.debug("Runner: cross-group caches wired (including candlestick signals cache).")
 

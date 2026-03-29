@@ -139,7 +139,55 @@ class DoubleBottomMachine(PatternStateMachine):
         if self._check_expiry():
             return self.state
         self.bars_in_formation += 1
-        raise NotImplementedError("DoubleBottomMachine.advance() — Phase 2 implementation pending")
+
+        close = float(getattr(features, "close", 0))
+
+        if self.state == PatternState.INACTIVE:
+            # Track 20-bar window to detect first trough via 2.5% decline from peak
+            window = self.metadata.get("_window", [])
+            window.append(close)
+            if len(window) > 20:
+                window.pop(0)
+            self.metadata["_window"] = window
+
+            if len(window) >= 10:
+                peak = max(window)
+                if peak > 0 and close < peak * 0.975:
+                    self.key_prices = [close]
+                    self.metadata["first_trough"] = close
+                    self.metadata["neckline_candidate"] = close
+                    self.started_at = getattr(features, "timestamp", None)
+                    self.bars_in_formation = 0
+                    self.state = PatternState.FORMING
+
+        elif self.state == PatternState.FORMING:
+            first_trough = self.metadata.get("first_trough", 0.0)
+            # Update neckline candidate (highest close between the two troughs)
+            if close > self.metadata.get("neckline_candidate", 0.0):
+                self.metadata["neckline_candidate"] = close
+            # Second trough: price is at most 0.1% above first trough,
+            # AND we have seen a recovery of > 0.3% above first trough (neckline set)
+            has_recovery = (
+                first_trough > 0
+                and self.metadata["neckline_candidate"] > first_trough * 1.003
+            )
+            at_second_trough = first_trough > 0 and close <= first_trough * 1.001
+            if has_recovery and at_second_trough:
+                self.metadata["second_trough"] = close
+                neckline = self.metadata["neckline_candidate"]
+                self.neckline_price = Decimal(str(round(neckline, 2)))
+                self.breakout_level = self.neckline_price
+                first_trough_d = Decimal(str(round(first_trough, 2)))
+                self.measured_move = self.neckline_price - first_trough_d
+                self.key_prices.append(close)
+                self.state = PatternState.BREAKOUT_PENDING
+
+        elif self.state == PatternState.BREAKOUT_PENDING:
+            # Confirmed: close strictly above neckline
+            if self.neckline_price and Decimal(str(close)) > self.neckline_price:
+                self.state = PatternState.CONFIRMED
+
+        return self.state
 
 
 class DescendingTriangleMachine(PatternStateMachine):

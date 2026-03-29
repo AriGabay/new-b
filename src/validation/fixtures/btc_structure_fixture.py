@@ -605,3 +605,326 @@ def get_all_phase62_fixtures() -> list[ReplayFixture]:
         get_m_top_short_fixture(),
         get_triple_touch_long_fixture(),
     ]
+
+
+# ─── Fixture 4: W-Bottom Long v2 (Phase 6.3 — at_support fix) ────────────────
+
+def _generate_w_bottom_long_v2_prices(n_warmup: int = 200) -> list[float]:
+    """
+    Phase 6.3 improved W-bottom LONG fixture.
+
+    Phase 6.3 root-cause: v1 and v2 both achieve 13/20 panel approvals.
+    The ceiling is caused by 4 abstaining evaluators. The most actionable is
+    VolumeProfileEvaluator (5.0 → 7.0):
+      vol_ratio > 1.2 AND volume_character="above_avg" → score=7.0 → approve
+
+    This version achieves vol_ratio > 1.2 by using a large entry body (800 BTC):
+      bar+18 (bearish setup): open=70100, close=69700, body=400
+        → at_support for bar+18: 69700-69670.2=29.8 ≤ ATR → TRUE
+        → PanelDecisionGroup sees bar+18 bundle (1-bar cache lag) → at_support=True ✓
+      bar+19 (entry engulfing): open=69700, close=70500, body=800
+        → move_pct=800/69700=0.01148; vol_mult≈1.23 → vol_ratio≈1.21 > 1.2 ✓
+        → VolumeProfile: 5+1(ratio>1.2)+1(above_avg)=7.0 → approve ✓
+
+    3 extra consolidation bars keep SMA20 near base, ensuring vol_ratio>1.2.
+
+    Expected panel improvement:
+      VolumeProfileEvaluator: 5.0 (abstain) → 7.0 (approve)
+      Net panel change: 13/20 → 14/20 ✓ (threshold met)
+
+    DESIGN INVARIANTS (verified analytically):
+      DIP2 swing_low (bar+12): low=69670.2 → swing_low ✓; nearest_support=69670.2
+      Engulfing (bar+19): open(69700)≤prev.close(69700) ✓; close(70500)≥prev.open(70100) ✓
+      at_support (bar+18 bundle): close=69700-support=69670.2=29.8 ≤ ATR ✓
+      vol_ratio (bar+19): body=800/69700→vol_mult≈1.23>1.2 ✓; volume_character=above_avg ✓
+      H3-005: full_bull ✓; vol_ratio>1.0 ✓; ADX>25 ✓; RSI 35-65 ✓
+    """
+    prices: list[float] = []
+
+    # Phase 0: mild uptrend (warmup)
+    for i in range(n_warmup):
+        t = i / n_warmup
+        base = 55000.0 + 10500.0 * t
+        noise = 300.0 * math.sin(i * 0.27 + 0.5) + 150.0 * math.sin(i * 0.71 + 1.2)
+        prices.append(base + noise)
+
+    # Phase 1: strong bull run — establishes full_bull
+    for i in range(30):
+        t = i / 29
+        base = 65500.0 + 6500.0 * t
+        noise = 80.0 * math.sin(i * 0.45 + 0.3)
+        prices.append(base + noise)
+
+    # Phase 2: W-bottom pullback (bars +0 to +14 identical to v1)
+    # Phase 3: 3 extra consolidation bars (v2 addition)
+    # Phase 4: revised bearish setup + engulfing entry
+    #
+    # OHLCV low formula: l = min(open,close) - body*0.3 - close*wick_pct
+    # DIP1 bar+5 (close=69800, open=70200): l=69800-120-139.6=69540.4 → swing_low ✓
+    # DIP2 bar+12 (close=69900, open=70200): l=69900-90-139.8=69670.2 → swing_low ✓
+    # Merged support level = (69540.4+69670.2)/2 = 69605.3
+    w_bottom: list[float] = [
+        71900.0,  # +0: pullback starts
+        71400.0,  # +1
+        70900.0,  # +2
+        70400.0,  # +3
+        70200.0,  # +4: pre-dip-1
+        69800.0,  # +5: *** DIP 1 *** open=70200, close=69800, body=400
+        70000.0,  # +6: recovery (body=200 < 400 ✓)
+        70300.0,  # +7: DIP-1 swing low CONFIRMED → level=69540.4
+        70600.0,  # +8
+        70800.0,  # +9: mini peak
+        70500.0,  # +10
+        70200.0,  # +11: pre-dip-2
+        69900.0,  # +12: *** DIP 2 *** open=70200, close=69900, body=300
+        70100.0,  # +13: recovery (body=200 < 300 ✓)
+        70300.0,  # +14: DIP-2 confirmed → MERGE → level=69605.3, touches≥2 ✓
+        # v2: 3 consolidation bars (flat low-body) keep SMA-20 near base volume
+        # so the entry bar's larger body pushes vol_ratio > 1.2 → VolumeProfile approve.
+        # Window at +19: bars +10..+19; first half +10..+14; DIP2 at +12 → first half ✓
+        70500.0,  # +15: consolidation 1 (small body keeps SMA20 low)
+        70300.0,  # +16: consolidation 2
+        70100.0,  # +17: consolidation 3
+        # BEARISH SETUP: open=70100, close=69700, body=400 (bearish ✓)
+        # close=69700 sits just above DIP2 swing low (69670.2) so:
+        #   at_support for bar+18: 69700-69670.2=29.8 ≤ ATR → TRUE ✓
+        #   PanelDecisionGroup reads bar+18 structural bundle (1-bar cache lag) → at_support=True ✓
+        69700.0,  # +18: *** BEARISH SETUP *** (open=70100, body=400)
+        # BULLISH ENGULFING + H3-005 + VolumeProfile target:
+        #   open=69700, close=70500, body=800
+        #   open(69700) ≤ prev.close(69700) ✓
+        #   close(70500) ≥ prev.open(70100) ✓ (engulfs with 400 margin)
+        #   vol: move_pct=800/69700=0.01148; vol_mult≈1.23; vol_ratio≈1.21 > 1.2 ✓
+        #   volume_character="above_avg" (vol_ratio>1.2) ✓
+        #   VolumeProfile: 5.0+1.0(ratio)+1.0(above_avg)=7.0 → approve ✓
+        #   H3-005: vol_ratio>1.0 ✓; EMA20≈70200; close/EMA20≈100.1% ✓
+        70500.0,  # +19: *** BULLISH ENGULFING + H3-005 + VolumeProfile approve ***
+    ]
+    prices.extend(w_bottom)
+
+    # Phase 5: brief continuation — flat/sideways to stay below DoubleBottom neckline=70800
+    # so that DoubleBottomMachine (first_trough=70200, neckline=70800) does NOT confirm
+    # during continuation (prevents test_v2_machine_not_confirmed_at_entry from failing).
+    for i in range(10):
+        base = 70500.0 + 100.0 * math.sin(i * 0.7 + 0.5)   # oscillates ±100 around 70500
+        prices.append(base)
+
+    return prices
+
+
+def get_w_bottom_long_v2_fixture() -> ReplayFixture:
+    """
+    W-bottom LONG v2 fixture — Phase 6.3 at_support fix.
+
+    Targets VolumeProfileEvaluator flip from abstain(5.0) to approve(7.0):
+      Key insight: vol_ratio > 1.2 AND volume_character="above_avg"
+      gives VolumeProfile score = 5+1+1 = 7.0 → approve.
+
+    Mechanism:
+      - bar+18 (bearish setup): close=69700, body=400
+          at_support=True (distance 29.8 ≤ ATR; PanelDecisionGroup reads
+          this bundle via 1-bar structural cache lag)
+      - bar+19 (entry): open=69700, close=70500, body=800
+          move_pct=800/69700≈0.0115; vol_mult≈1.23; vol_ratio≈1.21 > 1.2
+          VolumeProfile: 7.0 → approve ✓
+
+    Expected bar count: 260 (200 warmup + 30 bull + 20 W-bottom + 10 continuation)
+    Expected entry bar: ~249 (bar+19)
+    Expected panel change: VolumeProfile abstain(5.0)→approve(7.0), 13/20 → 14/20
+
+    Source: event_driven_runtime_replay (real pipeline, no forced approvals)
+    Phase: 6.3 — Natural Open Qualification
+    """
+    prices = _generate_w_bottom_long_v2_prices(n_warmup=200)
+    opens, highs, lows, closes, volumes = _build_ohlcv_series(
+        prices, wick_pct=0.002, volume_base=1200.0, volume_noise_seed=621,
+    )
+    fvs = _series_to_feature_vectors(opens, highs, lows, closes, volumes)
+    return ReplayFixture(
+        name="btc_w_bottom_long_v2",
+        description=(
+            f"{len(fvs)}-bar BTC W-bottom LONG v2. "
+            "Phase 6.3: VolumeProfile flip from abstain(5.0) to approve(7.0). "
+            "Entry bar body=800 (open=69700, close=70500) → vol_ratio=1.22 > 1.2 "
+            "→ volume_character=above_avg → VolumeProfile score=7.0 (approve). "
+            "Bearish setup bar (close=69700) puts 1-bar lag structural cache at at_support=True. "
+            "3 consolidation bars keep SMA20 at base. "
+            "Verified: panel 13/20→14/20, avg 6.700→6.850, rec=hold→rec=enter. "
+            "Verified: 1 PanelApprovedProposalEvent fires. "
+            "Real pipeline, no forced approvals. Phase 6.3."
+        ),
+        feature_vectors=fvs,
+        entry_expected_at_bar=None,
+        exit_expected_at_bar=None,
+    )
+
+
+def get_all_phase63_fixtures() -> list[ReplayFixture]:
+    """Return all Phase 6.3 improved fixtures."""
+    return [
+        get_w_bottom_long_v2_fixture(),
+    ]
+
+
+def _generate_double_bottom_long_v1_prices(n_warmup: int = 200) -> list[float]:
+    """
+    Double-bottom LONG v1 prices — Phase 6.4 chart pattern activation.
+
+    Designed so DoubleBottomMachine CONFIRMS at entry bar+19:
+      DIP1 (bar+5 close=69800) → FORMING when recovery seen at bar+7 (70200 > 70009.4)
+      Neckline: bar+8 close=70300 (max between DIP1 and DIP2)
+      DIP2 (bar+12 close=69850) → BREAKOUT_PENDING (69850 ≤ 69869.8)
+      bar+13 (close=69950): small recovery — ensures DIP2 bar is fractal swing low
+        DIP2 low = 69850-45-139.7=69665.3; bar+13 low = 69850-30-139.9=69680.1 > 69665.3 ✓
+      bar+18 (close=69700, open=70100): BEARISH SETUP (body=400)
+        at_support via bar+18 structural bundle (1-bar cache lag to PanelDecisionGroup) ✓
+        Support level: DIP1/DIP2 merge → ~69573; 69700-69573=127 ≤ ATR ✓
+      bar+19 (close=70600, open=69700): BULLISH ENGULFING (body=900) + CONFIRMED double bottom
+        close(70600) > neckline(70300) → DoubleBottomMachine CONFIRMED ✓
+        vol_ratio: move_pct=900/69700≈0.01291; vol_mult≈1.33; vol_ratio≈1.31 > 1.2 ✓
+        BreakoutEvaluator: has_confirmed=True, volume_ok=True → base=6.5;
+          proximity = |70600-70300|/70300*100=0.427% < 0.5% → +1.0 → score=7.5 approve ✓
+        PatternCompletionEvaluator: confirmed_patterns=['double_bottom'],
+          primary_confirmed='double_bottom', conservative_target=Decimal('250') ≠ None
+          → score = 8.0 + 2.0 = 10.0 → approve ✓
+
+    Phase 1 peak constraint: Phase 1 ends at exactly 71700.0 (no sinusoidal noise on
+    last bar) to ensure the 20-bar window peak is well-controlled.
+    bar+4 (70400): threshold=71700*0.975=69907.5; 70400 < 69907.5 is False → no trigger ✓
+    bar+5 (69800): 69800 < 69907.5 → True → FORMING triggered ✓ (first_trough=69800)
+    The w_bottom starts at 71400 (not 71900) matching the lower Phase 1 end.
+
+    Volume: 3 consolidation bars (+15,+16,+17 with bodies ≤ 100) keep SMA20 lower
+    than the entry body=900, ensuring vol_ratio > 1.2 with volume_noise_seed=625.
+
+    Support engineering: DIP2 raised from 69700→69850 so merged DIP1/DIP2 level
+    lands at ~69573 (touch zone [69273,69873]) getting 14+ touches from Phase1 bars
+    and w_bottom bars, surviving MAX_LEVELS=10 top-sort. bar+18 close=69700 is
+    within 1×ATR of support → at_support=True for CandlestickGroup bullish_engulfing ✓
+
+    Expected panel change vs v2: +2 votes (PatternCompletion + Breakout) → 16/20
+    """
+    import math
+    prices: list[float] = []
+
+    # Phase 0: warmup
+    for i in range(n_warmup):
+        t = i / n_warmup
+        base = 55000.0 + 10500.0 * t
+        noise = 300.0 * math.sin(i * 0.27 + 0.5) + 150.0 * math.sin(i * 0.71 + 1.2)
+        prices.append(base + noise)
+
+    # Phase 1: strong bull run — last 2 bars are smooth to reach exactly 71700.
+    # 71700*0.975=69907.5: bar+4(70400) no trigger, bar+5(69800) triggers ✓.
+    for i in range(28):
+        t = i / 27
+        base = 65500.0 + 6000.0 * t   # 65500 → 71500
+        noise = 80.0 * math.sin(i * 0.45 + 0.3)
+        prices.append(base + noise)
+    prices.append(71600.0)   # bar -2 of Phase 1 (smooth)
+    prices.append(71700.0)   # bar -1 of Phase 1 (exact 71700, no noise)
+
+    # Phase 2: W-bottom with double-bottom chart pattern (20 bars)
+    #
+    # DIP1 bar+5: 69800 < 71700*0.975=69907.5 → FORMING, first_trough=69800 ✓
+    # bar+7 close=70200: 70200 > 69800*1.003=70009.4 → neckline_candidate updated ✓
+    # bar+8 close=70300: neckline_candidate=70300
+    # bar+12 close=69850: 69850 ≤ 69800*1.001=69869.8 → BREAKOUT_PENDING ✓
+    #   neckline_price=70300, measured_move=500
+    #
+    # Support level engineering (at_support requirement):
+    #   DIP1 low ≈ 69800-180-139.6=69480.4 (swing_low confirmed bar+7)
+    #   DIP2 low ≈ 69850-45-139.7=69665.3 (swing_low confirmed bar+14)
+    #   Cluster merge: |69480.4-69665.3|=184.9 < 0.5×ATR≈300 → merged level≈69572.9
+    #   Touch zone [69273, 69873]: Phase1 bars (~6) + w_bottom bars (~8) ≈ 14+ touches
+    #   14+ touches > existing min (13) → survives MAX_LEVELS=10 sort ✓
+    #   bar+18 close=69700: distance 69700-69573=127 ≤ ATR(≈620) → at_support=True ✓
+    #   PanelDecisionGroup reads bar+18 structural bundle (1-bar cache lag) ✓
+    #
+    # Fractal constraint for DIP2 (bar+12 low 69665 < bar+13 low 69680 ✓):
+    #   bar+12 (69850): low=69850-45-139.7=69665.3
+    #   bar+13 (69950): open=69850, body=100, low=69850-30-139.9=69680.1 > 69665.3 ✓
+    #
+    # bar+18 open=70100, close=69700 → BEARISH SETUP ✓; at_support ✓
+    # bar+19 close=70600: 70600 > 70300 → CONFIRMED ✓
+    w_bottom: list[float] = [
+        71400.0,  # +0: pullback from 71700 peak
+        71100.0,  # +1
+        70800.0,  # +2
+        70500.0,  # +3
+        70400.0,  # +4: pre-dip (70400 >= 69907.5 → no trigger ✓)
+        69800.0,  # +5: DIP1 (69800 < 69907.5 → FORMING, first_trough=69800 ✓)
+        70000.0,  # +6: recovery starts
+        70200.0,  # +7: 70200 > 70009.4 → neckline_candidate=70200, has_recovery ✓
+        70300.0,  # +8: NECKLINE (neckline_candidate=70300)
+        70200.0,  # +9
+        70100.0,  # +10
+        70000.0,  # +11
+        69850.0,  # +12: DIP2 (69850≤69869.8 ✓) → BREAKOUT_PENDING (neckline=70300)
+        69950.0,  # +13: small recovery (bar+12 fractal: low 69665 < bar+13 low 69680 ✓)
+        70100.0,  # +14: DIP2 swing_low CONFIRMED; merged level≈69573, 14+ touches ✓
+        70000.0,  # +15: consolidation (low≈69830 ≤ 69873 → adds touch ✓)
+        70000.0,  # +16: consolidation (low≈69860 ≤ 69873 → adds touch ✓)
+        70100.0,  # +17: consolidation (open=70000 for bar+18)
+        # BEARISH SETUP: open=70100, close=69700, body=400
+        # bar+18 structural bundle: at_support=True (69700-69573=127 ≤ ATR ✓)
+        # PanelDecisionGroup reads this bundle via 1-bar structural cache lag ✓
+        69700.0,  # +18: BEARISH SETUP
+        # BULLISH ENGULFING + DOUBLE BOTTOM CONFIRMED:
+        #   open=69700, close=70600, body=900
+        #   open(69700) ≤ prev.close(69700) ✓; close(70600) ≥ prev.open(70100) ✓
+        #   close(70600) > neckline(70300) → CONFIRMED ✓
+        70600.0,  # +19: ENTRY
+    ]
+    prices.extend(w_bottom)
+
+    # Phase 3: brief continuation
+    for i in range(10):
+        t = i / 9
+        base = 70600.0 + 2000.0 * t
+        prices.append(base + 60.0 * math.sin(i * 0.5))
+
+    return prices
+
+
+def get_double_bottom_long_v1_fixture() -> "ReplayFixture":
+    """
+    Double-bottom LONG v1 fixture — Phase 6.4 chart pattern activation.
+
+    Activates ChartPatternGroup (DoubleBottomMachine) to push panel from 14/20 to 16/20:
+      PatternCompletion: abstain(5.0) → approve(10.0)  [confirmed + conservative_target]
+      Breakout: abstain(5.5) → approve(7.5)            [has_confirmed + proximity bonus]
+
+    Entry bar (bar+19, index ~249):
+      open=69700, close=70600, body=900
+      DoubleBottomMachine: neckline=70300, measured_move=500, conservative_target=250
+      vol_ratio ≈ 1.26 > 1.2 (VolumeProfile approve maintained)
+
+    Source: event_driven_runtime_replay (real pipeline, no forced approvals)
+    Phase: 6.4 — Chart Pattern Activation
+    Requires: ChartPatternGroup wired in BtcBybitPaperRunner
+    """
+    prices = _generate_double_bottom_long_v1_prices(n_warmup=200)
+    opens, highs, lows, closes, volumes = _build_ohlcv_series(
+        prices, wick_pct=0.002, volume_base=1200.0, volume_noise_seed=625,
+    )
+    fvs = _series_to_feature_vectors(opens, highs, lows, closes, volumes)
+    return ReplayFixture(
+        name="btc_double_bottom_long_v1",
+        description=(
+            f"{len(fvs)}-bar BTC double-bottom LONG v1. "
+            "Phase 6.4: DoubleBottomMachine confirms at bar+19, adding PatternCompletion "
+            "and Breakout approvals to panel. Entry: open=69700, close=70600, body=900. "
+            "Neckline=70300, measured_move=500. vol_ratio≈1.26 > 1.2. "
+            "Expected panel: 16/20 approve, avg≥7.0, rec=enter. "
+            "Requires ChartPatternGroup wired in BtcBybitPaperRunner."
+        ),
+        feature_vectors=fvs,
+        entry_expected_at_bar=None,
+        exit_expected_at_bar=None,
+    )
+
+
+def get_all_phase64_fixtures() -> list["ReplayFixture"]:
+    """Return all Phase 6.4 chart pattern activation fixtures."""
+    return [get_double_bottom_long_v1_fixture()]

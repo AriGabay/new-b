@@ -68,6 +68,8 @@ class PanelDecisionGroup(BaseGroup):
         self._feature_cache: dict = {}
         self._structural_cache: dict = {}
         self._candlestick_signal_cache: dict = {}   # symbol → list[CandlestickSignal]
+        self._chart_pattern_signal_cache: dict = {}   # symbol → list[ChartPatternSignal]
+        self._active_chart_pattern_cache: dict = {}   # symbol → list[str]
         self._journal_extension = journal_extension
         self._outcome_source = outcome_source
         self._trace_logger = None
@@ -85,6 +87,14 @@ class PanelDecisionGroup(BaseGroup):
     def set_candlestick_signal_cache(self, cache: dict) -> None:
         """Inject reference to CandlestickGroup's signal cache."""
         self._candlestick_signal_cache = cache
+
+    def set_chart_pattern_signal_cache(self, cache: dict) -> None:
+        """Inject reference to ChartPatternGroup's confirmed signal cache."""
+        self._chart_pattern_signal_cache = cache
+
+    def set_active_chart_pattern_cache(self, cache: dict) -> None:
+        """Inject reference to ChartPatternGroup's active pattern name cache."""
+        self._active_chart_pattern_cache = cache
 
     async def _setup(self) -> None:
         # Lazy import to avoid circular deps
@@ -139,6 +149,8 @@ class PanelDecisionGroup(BaseGroup):
 
         structural_bundle = self._structural_cache.get(symbol)
         candlestick_signals = self._candlestick_signal_cache.get(symbol, [])
+        chart_pattern_signals = self._chart_pattern_signal_cache.get(symbol, [])
+        active_chart_patterns = self._active_chart_pattern_cache.get(symbol, [])
 
         # 2. Build BTCSetupPacket
         try:
@@ -147,6 +159,8 @@ class PanelDecisionGroup(BaseGroup):
                 fv=fv,
                 structural_bundle=structural_bundle,
                 candlestick_signals=candlestick_signals,
+                chart_pattern_signals=chart_pattern_signals,
+                active_chart_patterns=active_chart_patterns,
             )
         except Exception as exc:
             logger.error(

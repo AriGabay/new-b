@@ -100,7 +100,7 @@ async def test_runner_setup_and_teardown():
         assert runner._risk_leverage is not None
         assert runner._exit is not None
         assert runner._performance_journal is not None
-        assert len(runner._all_groups) == 9
+        assert len(runner._all_groups) == 10  # Phase 6.4: ChartPatternGroup activated
     finally:
         await runner.teardown()
 

@@ -78,6 +78,10 @@ class ChartPatternGroup(BaseGroup):
         self._machines: dict[str, dict[str, PatternStateMachine]] = {}
         # symbol → {hypothesis_id: bars_since_failure} (RJ-007)
         self._failure_cooldown: dict[str, dict[str, int]] = {}
+        # symbol → list[ChartPatternSignal]  (confirmed this bar — read by PanelDecisionGroup)
+        self._signals_cache: dict[str, list] = {}
+        # symbol → list[str]  (active pattern names in non-terminal state)
+        self._active_cache: dict[str, list] = {}
 
     async def _setup(self) -> None:
         await self.bus.subscribe(FeatureReadyEvent, self.handle_event)
@@ -91,13 +95,71 @@ class ChartPatternGroup(BaseGroup):
         """
         Per-bar pipeline:
         1. Initialize machines for new symbols.
-        2. Advance all active machines.
-        3. Collect CONFIRMED signals, skip FAILED/EXPIRED.
-        4. Apply regime filter (RJ-009: adx14 < 20 blocks most patterns).
-        5. Apply cooldown filter (RJ-007: failed breakout retry block).
-        6. Publish GroupSignalEvent.
+        2. Tick failure cooldowns (RJ-007).
+        3. Advance all machines. Skip NotImplementedError machines (stub guard).
+        4. Collect CONFIRMED signals (apply RJ-009 regime filter).
+        5. Track active pattern names for non-terminal machines.
+        6. Update _signals_cache and _active_cache.
+        NOTE: Does NOT publish GroupSignalEvent — chart pattern data is delivered
+        to PanelDecisionGroup exclusively via the _signals_cache cache wiring.
+        EntryGroup composite_score normalization (ACTIVE_COMPOSITE_WEIGHT_SUM=0.55)
+        is unchanged so existing fixtures are not regressed.
         """
-        raise NotImplementedError("ChartPatternGroup._process_features() — Phase 2 implementation pending")
+        symbol = features.symbol
+        timeframe = features.timeframe
+
+        self._initialize_machines_for_symbol(symbol, timeframe)
+
+        # Tick cooldowns
+        cooldowns = self._failure_cooldown.setdefault(symbol, {})
+        for hyp_id in list(cooldowns.keys()):
+            cooldowns[hyp_id] = max(0, cooldowns[hyp_id] - 1)
+
+        confirmed_signals: list[ChartPatternSignal] = []
+        active_names: list[str] = []
+
+        for hyp_id, machine in self._machines[symbol].items():
+            try:
+                new_state = machine.advance(features)
+            except NotImplementedError:
+                # Stub machine — skip silently
+                continue
+            except Exception as exc:
+                logger.warning(
+                    "ChartPatternGroup: machine %s advance error: %s", hyp_id, exc
+                )
+                continue
+
+            if new_state == PatternState.CONFIRMED:
+                # RJ-009: adx14 < 20 blocks most patterns (H1-003/H1-005 exempt)
+                if features.adx14 < 20 and hyp_id not in ("H1-003", "H1-005"):
+                    logger.debug(
+                        "ChartPatternGroup: RJ-009 blocks %s (adx14=%.1f)",
+                        hyp_id, features.adx14,
+                    )
+                    machine.reset()
+                    cooldowns[hyp_id] = 5
+                    continue
+
+                signal = self._signal_from_machine(machine, hyp_id, features)
+                if signal:
+                    confirmed_signals.append(signal)
+                    logger.info(
+                        "ChartPatternGroup: %s CONFIRMED %s — neckline=%s measured_move=%s",
+                        hyp_id, symbol, machine.neckline_price, machine.measured_move,
+                    )
+                machine.reset()
+
+            elif new_state in (PatternState.FAILED, PatternState.EXPIRED):
+                cooldowns[hyp_id] = 5
+                machine.reset()
+
+            elif new_state not in (PatternState.INACTIVE,):
+                if not self._is_in_failure_cooldown(symbol, hyp_id):
+                    active_names.append(hyp_id)
+
+        self._signals_cache[symbol] = confirmed_signals
+        self._active_cache[symbol] = active_names
 
     def _initialize_machines_for_symbol(self, symbol: str, timeframe: str) -> None:
         """Create PatternStateMachine instances for all active hypotheses for symbol."""
@@ -118,9 +180,45 @@ class ChartPatternGroup(BaseGroup):
     def _signal_from_machine(
         self,
         machine: PatternStateMachine,
+        hyp_id: str,
+        features: FeatureVector,
     ) -> Optional[ChartPatternSignal]:
-        """
-        Build ChartPatternSignal from a CONFIRMED machine.
-        ChartPatternSignal.__post_init__ enforces conservative_target = 50% measured_move.
-        """
-        raise NotImplementedError("Phase 2 pending")
+        """Build ChartPatternSignal from a CONFIRMED machine."""
+        from core.schemas import Direction
+        from decimal import Decimal
+
+        bullish_hypotheses = {"H1-002", "H1-003", "H1-005"}
+        direction = Direction.LONG if hyp_id in bullish_hypotheses else Direction.SHORT
+
+        pattern_name_map = {
+            "H1-001": "head_and_shoulders",
+            "H1-002": "inverse_head_and_shoulders",
+            "H1-003": "double_bottom",
+            "H1-004": "descending_triangle",
+            "H1-005": "triple_bottom",
+        }
+        pattern_name = pattern_name_map.get(hyp_id, hyp_id.lower())
+
+        measured = machine.measured_move if machine.measured_move else Decimal("0")
+        breakout = machine.breakout_level if machine.breakout_level else Decimal("0")
+        neckline = machine.neckline_price
+
+        return ChartPatternSignal(
+            group_id="CHART_PATTERN",
+            symbol=features.symbol,
+            timeframe=features.timeframe,
+            timestamp=features.timestamp,
+            direction=direction,
+            signal_type="chart_pattern",
+            signal_subtype=pattern_name,
+            hypothesis_ref=hyp_id,
+            quality_score=0.8,
+            requires_structural_level=True,
+            context_confirmed=True,
+            confirmation_required=False,
+            confirmed_on_bar_close=True,
+            breakout_level=breakout,
+            measured_move=measured,
+            neckline_price=neckline,
+            bars_in_formation=machine.bars_in_formation,
+        )

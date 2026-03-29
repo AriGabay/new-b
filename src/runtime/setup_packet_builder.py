@@ -221,6 +221,43 @@ def build_empty_chart_pattern_snapshot() -> ChartPatternSnapshot:
     )
 
 
+def build_chart_pattern_snapshot(
+    confirmed_signals: list,
+    active_pattern_names: list,
+) -> ChartPatternSnapshot:
+    """Build ChartPatternSnapshot from ChartPatternGroup caches."""
+    from core.schemas import ChartPatternSignal as _CPS
+    cp_signals = [s for s in confirmed_signals if isinstance(s, _CPS)]
+
+    confirmed_names = [getattr(s, "signal_subtype", "") for s in cp_signals]
+    primary = confirmed_names[0] if confirmed_names else None
+
+    primary_signal = cp_signals[0] if cp_signals else None
+    measured_move = getattr(primary_signal, "measured_move", None)
+    conservative_target = getattr(primary_signal, "conservative_target", None)
+    breakout_level = getattr(primary_signal, "breakout_level", None)
+    direction = None
+    if primary_signal:
+        d = getattr(primary_signal, "direction", None)
+        if d is not None:
+            direction = (
+                "bullish"
+                if str(d).upper() in ("LONG", "DIRECTION.LONG")
+                else "bearish"
+            )
+
+    return ChartPatternSnapshot(
+        active_patterns=list(active_pattern_names),
+        confirmed_patterns=confirmed_names,
+        primary_confirmed=primary,
+        pattern_direction=direction,
+        measured_move=measured_move,
+        conservative_target=conservative_target,
+        breakout_level=breakout_level,
+        raw_signals=cp_signals,
+    )
+
+
 def build_setup_proposal(
     proposal: CandidateTradeProposal,
     fv: FeatureVector,
@@ -271,6 +308,8 @@ def build_btc_setup_packet(
     fv: FeatureVector,
     structural_bundle: Optional[StructuralLevelBundle] = None,
     candlestick_signals: Optional[list] = None,
+    chart_pattern_signals: Optional[list] = None,
+    active_chart_patterns: Optional[list] = None,
 ) -> BTCSetupPacket:
     """
     Build a BTCSetupPacket from runtime state.
@@ -280,6 +319,7 @@ def build_btc_setup_packet(
     - MACD values default to zero (not in FeatureVector; to be added Phase 5)
     - ChartPatternSnapshot is always empty (group stubbed)
     - StructuralSnapshot uses defaults if TechnicalStructureGroup not wired
+    # ChartPatternSnapshot built from cache when chart_pattern_signals or active_chart_patterns present
     """
     from core.schemas import RegimeContext
     regime = RegimeContext(
@@ -308,9 +348,16 @@ def build_btc_setup_packet(
         indicators=build_indicator_snapshot(fv),
         structure=build_structural_snapshot(structural_bundle),
         candlestick=build_candlestick_snapshot(candlestick_signals or [], structural_bundle),
-        chart_pattern=build_empty_chart_pattern_snapshot(),
+        chart_pattern=build_chart_pattern_snapshot(
+            chart_pattern_signals or [],
+            active_chart_patterns or [],
+        ) if (chart_pattern_signals or active_chart_patterns) else build_empty_chart_pattern_snapshot(),
         regime=regime,
         proposal=build_setup_proposal(proposal, fv),
-        groups_contributed=["indicators", "candlestick", "technical_structure"],
+        groups_contributed=(
+            ["indicators", "candlestick", "technical_structure", "chart_pattern"]
+            if (chart_pattern_signals or active_chart_patterns)
+            else ["indicators", "candlestick", "technical_structure"]
+        ),
         packet_valid=True,
     )

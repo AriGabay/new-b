@@ -67,6 +67,7 @@ class TraderEvaluatorPanel:
 
     APPROVE_THRESHOLD = 14   # need 14/20 to enter
     MIN_AVG_SCORE = 6.5      # need avg score >= 6.5
+    AVG_SCORE_THRESHOLD = 6.5  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
 
     def __init__(self) -> None:
         self._evaluators = [
