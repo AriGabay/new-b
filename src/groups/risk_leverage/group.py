@@ -69,13 +69,23 @@ from core.state import RiskState, SystemState
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RISK_FRACTION  = Decimal("0.01")   # 1% per trade
-MAX_SINGLE_POSITION    = Decimal("0.10")   # 10% of equity cap
-DAILY_LOSS_LIMIT       = -0.02             # −2% daily PnL
-MAX_DRAWDOWN_HALT      = 0.10              # 10% drawdown halts system
-MAX_PORTFOLIO_EXPOSURE = Decimal("0.25")   # 25% total exposure
-MAX_CORRELATED_CLUSTER = Decimal("0.15")   # 15% per correlation cluster
+DEFAULT_RISK_FRACTION  = Decimal("0.01")   # 1% per trade (used for R tracking)
+# Leveraged futures risk limits — calibrated for 5×–35× leverage model
+# where a single 1R loss can be 10–18% of equity.
+DAILY_LOSS_LIMIT       = -0.20             # −20% daily PnL (allows 1–2 full losing trades)
+MAX_DRAWDOWN_HALT      = 0.40              # 40% drawdown halts system
 PUMP_VOLUME_RATIO      = 5.0               # 5× normal volume = pump signal
+
+# Leverage-driven sizing (perpetual futures model)
+MIN_LEVERAGE           = 5.0               # Minimum leverage for any approved trade
+MAX_LEVERAGE           = 35.0              # Maximum leverage cap
+MAX_RISK_PER_TRADE     = 0.10              # 10% of equity max risk per trade
+DEFAULT_MAX_BARS       = 48                # Time stop: 48 bars (2 days on 1h)
+
+# Portfolio exposure limits — in MARGIN terms (notional/leverage), not raw notional.
+# With leveraged futures, notional can be many × equity; we track margin utilization.
+MAX_MARGIN_UTILIZATION = Decimal("0.80")   # 80% of equity as margin across all positions
+MAX_CLUSTER_MARGIN     = Decimal("0.80")   # 80% margin per correlation cluster
 
 
 class RiskLeverageGroup(BaseGroup):
@@ -251,36 +261,41 @@ class RiskLeverageGroup(BaseGroup):
         return RiskCheckResult.approved_ok()
 
     def _check_portfolio_exposure(self, proposal: CandidateTradeProposal) -> RiskCheckResult:
-        """Rule 4: Total open position USD ≤ 25% of equity."""
+        """Rule 4: Total margin utilization ≤ 80% of equity.
+
+        In leveraged perpetual futures, we track margin (notional/leverage),
+        not raw notional, to avoid rejecting valid leveraged positions.
+        """
         portfolio = self.state.portfolio
         equity = portfolio.equity
         if equity <= 0:
             return RiskCheckResult.approved_ok()
-        total_exposure = sum(
-            p.position_size_usd for p in portfolio.open_positions.values()
+        total_margin = sum(
+            p.position_size_usd / Decimal(str(max(p.leverage, 1.0)))
+            for p in portfolio.open_positions.values()
         )
-        if total_exposure / equity > MAX_PORTFOLIO_EXPOSURE:
+        if total_margin / equity > MAX_MARGIN_UTILIZATION:
             return RiskCheckResult.rejected(
                 RejectionCode.PORTFOLIO_EXPOSURE,
-                f"Portfolio exposure {float(total_exposure / equity):.1%} exceeds {float(MAX_PORTFOLIO_EXPOSURE):.0%} limit.",
+                f"Margin utilization {float(total_margin / equity):.1%} exceeds {float(MAX_MARGIN_UTILIZATION):.0%} limit.",
             )
         return RiskCheckResult.approved_ok()
 
     def _check_correlated_exposure(self, proposal: CandidateTradeProposal) -> RiskCheckResult:
-        """Rule 5: BTC correlation cluster ≤ 15% of equity."""
+        """Rule 5: BTC cluster margin ≤ 80% of equity."""
         portfolio = self.state.portfolio
         equity = portfolio.equity
         if equity <= 0:
             return RiskCheckResult.approved_ok()
-        btc_exposure = sum(
-            p.position_size_usd
+        btc_margin = sum(
+            p.position_size_usd / Decimal(str(max(p.leverage, 1.0)))
             for p in portfolio.open_positions.values()
             if getattr(p, "correlation_cluster", "btc") == "btc"
         )
-        if btc_exposure / equity > MAX_CORRELATED_CLUSTER:
+        if btc_margin / equity > MAX_CLUSTER_MARGIN:
             return RiskCheckResult.rejected(
                 RejectionCode.CORRELATED_EXPOSURE,
-                f"BTC cluster exposure {float(btc_exposure / equity):.1%} exceeds {float(MAX_CORRELATED_CLUSTER):.0%} limit.",
+                f"BTC cluster margin {float(btc_margin / equity):.1%} exceeds {float(MAX_CLUSTER_MARGIN):.0%} limit.",
             )
         return RiskCheckResult.approved_ok()
 
@@ -336,26 +351,84 @@ class RiskLeverageGroup(BaseGroup):
                 f"composite_score {proposal.composite_score:.2f} < 0.50.")
         return RiskCheckResult.approved_ok()
 
+    def _compute_leverage(
+        self,
+        proposal: CandidateTradeProposal,
+        stop_dist_pct: float,
+    ) -> float:
+        """
+        Determine leverage from setup quality, market conditions, and risk cap.
+
+        Leverage ladder (base, before adjustments):
+          composite_score >= 0.75 (A quality)  → 20×
+          composite_score >= 0.65 (B quality)  → 15×
+          composite_score >= 0.55 (C+ quality) → 10×
+          composite_score >= 0.50 (C quality)  →  7×
+
+        Volatility adjustment:
+          High volatility (stop > 4% of entry)  → ×0.6
+          Low volatility  (stop < 1.5% of entry) → ×1.2
+
+        Drawdown adjustment:
+          Drawdown > 5% → ×0.75
+
+        Risk cap: leverage × stop_dist_pct ≤ MAX_RISK_PER_TRADE (10%).
+          If exceeded, leverage is reduced to fit the risk cap.
+
+        Final result clamped to [MIN_LEVERAGE, MAX_LEVERAGE].
+        """
+        score = proposal.composite_score
+        if score >= 0.75:
+            base = 20.0
+        elif score >= 0.65:
+            base = 15.0
+        elif score >= 0.55:
+            base = 10.0
+        else:
+            base = 7.0
+
+        # Volatility adjustment
+        if stop_dist_pct > 0.04:
+            base *= 0.6
+        elif stop_dist_pct < 0.015:
+            base *= 1.2
+
+        # Graduated drawdown reduction ladder
+        dd = self.state.portfolio.drawdown_pct
+        if dd > 0.25:
+            base *= 0.50   # Severe: half leverage
+        elif dd > 0.15:
+            base *= 0.65   # Moderate: 65%
+        elif dd > 0.08:
+            base *= 0.80   # Mild: 80%
+
+        # Risk cap: ensure leverage × stop_dist_pct ≤ MAX_RISK_PER_TRADE
+        if stop_dist_pct > 0:
+            max_from_risk = MAX_RISK_PER_TRADE / stop_dist_pct
+            base = min(base, max_from_risk)
+
+        return max(MIN_LEVERAGE, min(MAX_LEVERAGE, base))
+
     def _compute_order(
         self,
         proposal: CandidateTradeProposal,
         size_reduction: Decimal,
     ) -> RiskApprovedOrder:
         """
-        Compute position size using R-multiple method.
+        Compute position size using leverage-driven model for perpetual futures.
+
+        Flow:
+        1. Place ATR-based stop.
+        2. Compute leverage from setup quality + market conditions.
+        3. Position size = equity × leverage × size_reduction.
+        4. R amount = size_base × stop_distance (actual risk in USD).
+        5. Target = entry ± 2× stop distance.
+
         Returns RiskApprovedOrder.
         """
-        from risk.sizing import ATRStopPlacer, RMultipleSizer
+        from risk.sizing import ATRStopPlacer
 
         equity = self.state.portfolio.equity
-
-        # Apply drawdown-based size reduction on top of event-risk reduction
-        dd = self.state.portfolio.drawdown_pct
-        if dd > 0.05:
-            drawdown_reduction = Decimal("0.75")
-        else:
-            drawdown_reduction = Decimal("1.0")
-        combined_reduction = size_reduction * drawdown_reduction
 
         # Place stop using ATR
         atr14 = self.state.regime.atr14 if self.state.regime.atr14 > 0 else Decimal("1000")
@@ -364,19 +437,24 @@ class RiskLeverageGroup(BaseGroup):
 
         # Compute target: 2× stop distance
         stop_dist = abs(proposal.entry_price - stop_price)
+        stop_dist_pct = float(stop_dist / proposal.entry_price) if proposal.entry_price > 0 else 0.025
         if proposal.direction == Direction.LONG:
             target_price = proposal.entry_price + stop_dist * Decimal("2")
         else:
             target_price = proposal.entry_price - stop_dist * Decimal("2")
 
-        # Size the position
-        sizer = RMultipleSizer(equity=equity)
-        size_base, size_usd, r_amount = sizer.compute(
-            proposal.entry_price, stop_price, combined_reduction
-        )
+        # Compute leverage from setup quality and conditions
+        leverage = self._compute_leverage(proposal, stop_dist_pct)
 
-        leverage = float(size_usd / equity) if equity > 0 else 1.0
-        leverage = min(leverage, 3.0)
+        # Position size from leverage (apply event-risk size_reduction)
+        size_usd = equity * Decimal(str(leverage)) * size_reduction
+        size_base = size_usd / proposal.entry_price if proposal.entry_price > 0 else Decimal("0")
+
+        # R amount = actual risk in USD (for exit trailing-stop logic and tracking)
+        r_amount = size_base * stop_dist
+
+        # Risk fraction = r_amount / equity (for record-keeping)
+        risk_fraction = float(r_amount / equity) if equity > 0 else 0.0
 
         rule_names = [
             "_check_mode_gate",
@@ -401,9 +479,9 @@ class RiskLeverageGroup(BaseGroup):
             position_size_base=size_base,
             leverage=leverage,
             r_amount=r_amount,
-            risk_fraction=float(sizer.risk_fraction),
+            risk_fraction=risk_fraction,
             risk_checks_passed=rule_names,
-            max_bars_to_hold=20,
+            max_bars_to_hold=DEFAULT_MAX_BARS,
         )
 
     async def _approve(

@@ -19,7 +19,7 @@ Exit priority (first condition triggered wins):
   1. Hard stop loss   — price crosses stop_price (LONG: low ≤ stop; SHORT: high ≥ stop)
   2. Target reached   — price crosses target_price (LONG: high ≥ target; SHORT: low ≤ target)
   3. Trailing stop    — trailing_stop_price set after 1R favorable move
-  4. Time stop        — bars_held ≥ max_bars_to_hold
+  4. Time stop        — bars_held ≥ MAX_BARS_TO_HOLD (48 bars = 2 days on 1h)
   5. Signal reversal  — opposing ChartPattern/Indicator signal (advisory, not forced)
 
 Trailing stop rules:
@@ -49,6 +49,8 @@ from core.schemas import Direction, ExitReason, ExitSignal, FeatureVector, Posit
 from core.state import SystemState
 
 logger = logging.getLogger(__name__)
+
+MAX_BARS_TO_HOLD = 48   # 48 bars = 2 days on 1h timeframe
 
 
 class ExitGroup(BaseGroup):
@@ -128,7 +130,7 @@ class ExitGroup(BaseGroup):
         1. Hard stop loss
         2. Target reached
         3. Trailing stop triggered
-        4. Time stop (bars_held >= 20)
+        4. Time stop (bars_held >= MAX_BARS_TO_HOLD)
 
         Before checking, update trailing stop if position is favorable.
 
@@ -184,7 +186,7 @@ class ExitGroup(BaseGroup):
             )
 
         # 4. Time stop
-        if position.bars_held >= 20:
+        if position.bars_held >= MAX_BARS_TO_HOLD:
             exit_price = features.close
             pnl_usd, pnl_r = self._compute_pnl(position, exit_price)
             return ExitSignal(

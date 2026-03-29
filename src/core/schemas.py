@@ -360,7 +360,7 @@ class RiskApprovedOrder:
     r_amount:           Decimal = Decimal("0")
     risk_fraction:      float = 0.01
     risk_checks_passed: list[str] = field(default_factory=list)
-    max_bars_to_hold:   int = 20
+    max_bars_to_hold:   int = 48
     timestamp:          datetime = field(default_factory=datetime.utcnow)
 
 

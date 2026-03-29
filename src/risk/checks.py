@@ -41,7 +41,7 @@ CORRELATION_CLUSTERS: dict[str, str] = {
 
 MAX_PORTFOLIO_EXPOSURE_PCT  = Decimal("0.25")   # 25% total
 MAX_CLUSTER_EXPOSURE_PCT    = Decimal("0.15")   # 15% per cluster
-MAX_LEVERAGE                = 3.0
+MAX_LEVERAGE                = 35.0
 PUMP_VOLUME_RATIO_THRESHOLD = 5.0
 PUMP_LOOKBACK_BARS          = 3
 
@@ -106,9 +106,9 @@ class LeverageGovernor:
     """
     Rule: Hard cap on leverage.
 
-    Phase 2: Leverage is always 1.0 (no leverage in Phase 2).
-    Phase 3: Max 3× leverage, only if OOS-validated signal and
-             explicit human approval in config.
+    Leverage range: 5×–35× (perpetual futures model).
+    Leverage is determined by RiskLeverageGroup._compute_leverage()
+    based on setup quality, volatility, and drawdown.
 
     If leverage > MAX_LEVERAGE: reject.
     If mode is RESEARCH: leverage forced to 1.0.

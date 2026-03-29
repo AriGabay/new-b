@@ -77,13 +77,16 @@ class SystemState:
     async def open_position(self, position: Position) -> None:
         async with self._lock:
             self.portfolio.open_positions[position.position_id] = position
-            self.portfolio.available -= position.position_size_usd
+            # Deduct margin (notional / leverage), not full notional, for leveraged futures.
+            margin = position.position_size_usd / Decimal(str(max(position.leverage, 1.0)))
+            self.portfolio.available -= margin
 
     async def close_position(self, position_id: str, pnl_usd: Decimal) -> None:
         async with self._lock:
             pos = self.portfolio.open_positions.pop(position_id, None)
             if pos:
-                self.portfolio.available += pos.position_size_usd
+                margin = pos.position_size_usd / Decimal(str(max(pos.leverage, 1.0)))
+                self.portfolio.available += margin
             self.portfolio.equity += pnl_usd
             self.portfolio.daily_pnl += pnl_usd
             self.portfolio.daily_pnl_pct = float(

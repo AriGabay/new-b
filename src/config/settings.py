@@ -45,9 +45,9 @@ class RiskConfig:
     max_position_fraction: Decimal = Decimal("0.10")
     max_portfolio_exposure: Decimal = Decimal("0.25")
     max_cluster_exposure:  Decimal = Decimal("0.15")
-    daily_loss_limit:      float   = -0.02
-    max_drawdown_halt:     float   = 0.10
-    max_leverage:          float   = 1.0   # Phase 2: no leverage
+    daily_loss_limit:      float   = -0.20   # Leveraged: 1-2 losing trades/day
+    max_drawdown_halt:     float   = 0.40   # Leveraged: halt at 40% to prevent ruin
+    max_leverage:          float   = 35.0  # Leveraged perpetual futures: 5×–35×
     atr_stop_multiplier:   Decimal = Decimal("2.0")
 
 

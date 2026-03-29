@@ -194,7 +194,7 @@ class BacktestEngine:
                         result.winning_trades += 1
                         open_position = None
 
-                    elif bars_held >= 20:
+                    elif bars_held >= 48:
                         # Time stop — exit at current close
                         exit_price = bar.close
                         if pos["direction"] == "LONG":
