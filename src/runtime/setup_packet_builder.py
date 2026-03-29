@@ -6,7 +6,9 @@ Maps FeatureVector + CandidateTradeProposal + SystemState → BTCSetupPacket.
 
 Fields that cannot be fully computed from FeatureVector are filled with
 safe defaults and documented. MACD is not in FeatureVector — zeros used.
-ChartPatternSnapshot is always empty (group is stubbed).
+ChartPatternSnapshot is built from ChartPatternGroup._signals_cache and
+_active_cache (injected via runner._wire_caches); empty snapshot only when
+no chart pattern signals or active patterns are present for the symbol.
 
 Source: /docs/runtime_runner_design.md
 """
@@ -293,8 +295,8 @@ def build_setup_proposal(
         r_r_ratio=r_r,
         stop_distance_pct=stop_dist_pct,
         target_distance_pct=target_dist_pct,
-        proposed_leverage=min(float(entry_price / (entry_price - stop_price)), 3.0)
-            if (entry_price - stop_price) != 0 and stop_dist > 0 else 1.0,
+        proposed_leverage=min(float(entry_price / stop_dist), 3.0)
+            if stop_dist > 0 else 1.0,
         proposed_risk_pct=0.01,
         setup_quality=_setup_quality(proposal.composite_score),
         confirming_signals=getattr(proposal, "setup_refs", []) or [],

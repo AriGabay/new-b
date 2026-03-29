@@ -107,7 +107,11 @@ _ACTIVE_SCORE_COMPONENTS: dict = {
     "indicator":        0.20,   # Phase 3
     "candlestick":      0.25,   # Phase 3
     "structural":       0.10,   # Phase 3
-    # "chart_pattern":  0.35,   # Phase 4+ (ChartPatternGroup not yet implemented)
+    # "chart_pattern":  0.35,   # Excluded: ChartPatternGroup does NOT publish GroupSignalEvent.
+    #                            # Chart pattern data reaches PanelDecisionGroup exclusively
+    #                            # via _signals_cache cache wiring (runner._wire_caches).
+    #                            # Intentionally kept out of EntryGroup scoring to preserve
+    #                            # existing regression fixtures. See ChartPatternGroup NOTE.
     # "historian":      0.10,   # Phase 4+ (HistorianAgent not yet wired)
 }
 
