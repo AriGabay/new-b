@@ -105,6 +105,12 @@ class MarketDataGroup(BaseGroup):
         timeframes, computes initial FeatureVectors, and marks BTC eligible.
 
         Fetches 200 bars each for 1d, 4h, and 1h timeframes.
+
+        After loading, publishes one FeatureReadyEvent for the 1h timeframe
+        if the FeatureComputer has enough data. This ensures all subscribed
+        groups (Indicators, Candlestick, TechnicalStructure, Entry, Exit)
+        process the current market state immediately at startup rather than
+        waiting up to 60 minutes for the next natural bar close.
         """
         timeframe_intervals = [
             ("1d", "D"),
@@ -131,9 +137,11 @@ class MarketDataGroup(BaseGroup):
                     fv = self._computer.compute(bar_list)
                     self._feature_cache[key] = fv
                     logger.info(
-                        "startup_load: %s/%s — loaded %d bars, features=%s",
+                        "startup_load: %s/%s — loaded %d bars, features=%s, "
+                        "last_bar_ts=%s",
                         symbol, tf_label, len(bar_list),
                         "ready" if fv is not None else "warming up",
+                        self._last_bar_ts[key],
                     )
                 else:
                     logger.warning(
@@ -145,6 +153,30 @@ class MarketDataGroup(BaseGroup):
                 )
 
         await self.state.update_universe({BTC_SYMBOL})
+
+        # Publish FeatureReadyEvent for 1h timeframe so all groups can
+        # process the current market state immediately at startup.
+        # Without this, groups are silent until the next natural bar close
+        # (up to 60 minutes away).
+        primary_key = (symbol, "1h")
+        fv_1h = self._feature_cache.get(primary_key)
+        if fv_1h is not None:
+            await self.state.update_last_close(symbol, fv_1h.close)
+            await self.bus.publish(
+                FeatureReadyEvent(source=f"{self.group_id.value}.startup", features=fv_1h)
+            )
+            logger.info(
+                "startup_load: published initial FeatureReadyEvent for %s/1h "
+                "(close=%s, ts=%s). Groups will process current market state.",
+                symbol, fv_1h.close, fv_1h.timestamp,
+            )
+        else:
+            logger.warning(
+                "startup_load: 1h FeatureVector not ready after startup "
+                "(need %d bars, have %d). Will wait for first natural bar close.",
+                200, len(list(self._bar_history.get(primary_key, []))),
+            )
+
         logger.info("startup_load complete. BTC eligible.")
 
     async def fetch_and_process(
@@ -155,6 +187,19 @@ class MarketDataGroup(BaseGroup):
         """
         Main method called by the polling loop each bar close.
 
+        Returns:
+            FeatureVector if a NEW bar was detected and features were computed.
+            None if:
+              - No new bar since last poll (most calls — only one new bar per hour).
+              - Fetch failed.
+              - Not enough history for FeatureComputer yet.
+
+        IMPORTANT: Returns None when there is no new bar, even if the feature
+        cache is populated. This is the signal used by run_one_bar() to determine
+        whether the downstream chain was triggered. Do NOT return a cached
+        FeatureVector on no-new-bar — that causes a false "bar processed" count
+        and a completely silent downstream chain.
+
         Steps:
         1. Fetch latest bars from Bybit (limit=200 to catch up if needed).
         2. For each bar newer than last known, append to bar_history.
@@ -163,7 +208,7 @@ class MarketDataGroup(BaseGroup):
         5. Store in feature_cache.
         6. Publish BarCloseEvent for each new bar.
         7. Publish FeatureReadyEvent with the latest FeatureVector.
-        8. Return the FeatureVector or None.
+        8. Return the new FeatureVector (or None if no new bar / warming up).
         """
         tf_label = INTERVAL_TO_TF.get(interval)
         if tf_label is None:
@@ -193,8 +238,24 @@ class MarketDataGroup(BaseGroup):
                 new_bars.append(bar)
 
         if not new_bars:
-            # No new data — return cached features
-            return self._feature_cache.get(key)
+            # No new bar since last poll — downstream chain should NOT run.
+            # Log at DEBUG so the polling silence is visible at high verbosity.
+            logger.debug(
+                "fetch_and_process: %s/%s — no new bar (last bar: %s). "
+                "Downstream chain idle.",
+                symbol, tf_label, self._last_bar_ts.get(key),
+            )
+            # Return None — NOT the cached FeatureVector.
+            # Callers that need cached features should call get_feature_cache().
+            return None
+
+        # New bar(s) detected — run the full pipeline.
+        logger.info(
+            "fetch_and_process: %s/%s — NEW BAR detected: %d bar(s) "
+            "(newest ts: %s). Triggering downstream chain.",
+            symbol, tf_label, len(new_bars),
+            new_bars[-1].timestamp if new_bars else None,
+        )
 
         # Compute FeatureVector from the full rolling window
         bar_list = list(self._bar_history[key])
@@ -213,14 +274,16 @@ class MarketDataGroup(BaseGroup):
             await self.bus.publish(
                 FeatureReadyEvent(source=self.group_id.value, features=fv)
             )
-            logger.debug(
-                "fetch_and_process: %s/%s — %d new bar(s), features published",
-                symbol, tf_label, len(new_bars),
+            logger.info(
+                "fetch_and_process: %s/%s — FeatureReadyEvent published "
+                "(close=%s, atr14=%s). All subscribed groups triggered.",
+                symbol, tf_label, fv.close, fv.atr14,
             )
         else:
-            logger.debug(
-                "fetch_and_process: %s/%s — %d new bar(s), still warming up (%d bars)",
-                symbol, tf_label, len(new_bars), len(bar_list),
+            logger.info(
+                "fetch_and_process: %s/%s — %d new bar(s) stored, "
+                "still warming up (%d/%d bars). No FeatureReadyEvent yet.",
+                symbol, tf_label, len(new_bars), len(bar_list), 200,
             )
 
         return fv

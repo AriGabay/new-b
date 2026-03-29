@@ -1,7 +1,7 @@
 """
 Bybit V5 REST API adapter for OHLCV data ingestion.
 
-Fetches closed OHLCV bars from the Bybit V5 /v5/market/klines endpoint.
+Fetches closed OHLCV bars from the Bybit V5 /v5/market/kline endpoint.
 No API key required for public market data.
 
 Timeframe mapping:
@@ -9,7 +9,7 @@ Timeframe mapping:
   "240" -> "4h"
   "D"   -> "1d"
 
-Source: https://bybit-exchange.github.io/docs/v5/market/kline
+Source: BYBIT_KLINES_PATH = "/v5/market/kline"
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from core.schemas import OHLCVBar
 logger = logging.getLogger(__name__)
 
 BYBIT_BASE_URL = "https://api.bybit.com"
-BYBIT_KLINES_PATH = "/v5/market/klines"
+BYBIT_KLINES_PATH = "/v5/market/kline"
 
 # Bybit interval string -> our Timeframe string
 _INTERVAL_TO_TIMEFRAME: dict[str, str] = {

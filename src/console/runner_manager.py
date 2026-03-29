@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_GROUPS = [
     "MarketDataGroup",
+    "ChartPatternGroup",       # Active since Phase 6.4 (DoubleBottomMachine)
     "IndicatorsGroup",
     "CandlestickGroup",
     "TechnicalStructureGroup",
@@ -32,10 +33,9 @@ ACTIVE_GROUPS = [
 ]
 
 EXCLUDED_GROUPS = [
-    "ChartPatternGroup",
-    "NewsMacroGroup",
-    "HistorianAgent",
-    "CriticAgent",
+    "NewsMacroGroup",          # Stubbed — raises NotImplementedError
+    "HistorianAgent",          # Phase 4+ only
+    "CriticAgent",             # Phase 4+ only
 ]
 
 
@@ -114,12 +114,27 @@ class RunnerManager:
     async def _run_loop(self) -> None:
         """Background task for the live polling loop."""
         try:
-            await self._runner.run_paper_loop()
-        except asyncio.CancelledError:
+            # Use a patched loop so RunnerManager._bars_processed stays
+            # in sync with the runner's internal bar count.
+            from runtime.runner import POLL_INTERVAL_SECONDS
+            import asyncio as _asyncio
+            poll_count = 0
+            while self._running and self._runner is not None:
+                poll_count += 1
+                try:
+                    got_new = await self._runner.run_one_bar()
+                    if got_new:
+                        self._bars_processed += 1
+                except _asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    self._error = str(e)
+                    logger.error(
+                        "RunnerManager: poll #%d error: %s", poll_count, e
+                    )
+                await _asyncio.sleep(POLL_INTERVAL_SECONDS)
+        except _asyncio.CancelledError:
             pass
-        except Exception as e:
-            self._error = str(e)
-            logger.error("RunnerManager: run loop error: %s", e)
         finally:
             self._running = False
 
@@ -168,7 +183,13 @@ class RunnerManager:
         """Return current runner status as a JSON-safe dict."""
         groups = []
         if self._runner is not None:
-            for name in ACTIVE_GROUPS:
+            # Use the live group list from the runner (authoritative)
+            live_groups = getattr(self._runner, "_all_groups", None)
+            active_names = (
+                [type(g).__name__ for g in live_groups]
+                if live_groups else ACTIVE_GROUPS
+            )
+            for name in active_names:
                 groups.append({
                     "name": name,
                     "status": "active",
@@ -178,7 +199,7 @@ class RunnerManager:
                 groups.append({
                     "name": name,
                     "status": "excluded",
-                    "note": "Not wired in Phase 3.",
+                    "note": "Stubbed — not wired.",
                 })
         else:
             for name in ACTIVE_GROUPS:
@@ -191,7 +212,7 @@ class RunnerManager:
                 groups.append({
                     "name": name,
                     "status": "excluded",
-                    "note": "Not wired in Phase 3.",
+                    "note": "Stubbed — not wired.",
                 })
 
         return {

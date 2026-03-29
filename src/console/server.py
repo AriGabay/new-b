@@ -156,13 +156,13 @@ async def get_status():
         "phase": "Phase 6",
         "architecture": {
             "active_groups": [
-                "MarketDataGroup", "IndicatorsGroup", "CandlestickGroup",
-                "TechnicalStructureGroup", "EntryGroup", "PanelDecisionGroup",
-                "RiskLeverageGroup", "ExitGroup", "PerformanceJournalGroup",
+                "MarketDataGroup", "ChartPatternGroup", "IndicatorsGroup",
+                "CandlestickGroup", "TechnicalStructureGroup", "EntryGroup",
+                "PanelDecisionGroup", "RiskLeverageGroup", "ExitGroup",
+                "PerformanceJournalGroup",
             ],
             "excluded_groups": [
-                "ChartPatternGroup", "NewsMacroGroup",
-                "HistorianAgent", "CriticAgent",
+                "NewsMacroGroup", "HistorianAgent", "CriticAgent",
             ],
             "panel_policy": {
                 "approve_threshold": 14,

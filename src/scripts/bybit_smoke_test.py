@@ -5,7 +5,7 @@ Tests each layer of the Bybit connection stack independently:
   Layer 1: DNS resolution for api.bybit.com
   Layer 2: TCP connectivity to api.bybit.com:443
   Layer 3: TLS handshake (is the cert for bybit.com, or a proxy?)
-  Layer 4: HTTP request to /v5/market/klines
+  Layer 4: HTTP request to /v5/market/kline
   Layer 5: Response parsing (retCode, result.list)
   Layer 6: BybitAdapter integration test (uses the actual adapter class)
 
@@ -17,7 +17,7 @@ Expected output in clean environment:
   [PASS] Layer 1: DNS resolved api.bybit.com -> <real_ip>
   [PASS] Layer 2: TCP connected to api.bybit.com:443
   [PASS] Layer 3: TLS certificate CN=*.bybit.com (not proxied)
-  [PASS] Layer 4: HTTP 200 from /v5/market/klines
+  [PASS] Layer 4: HTTP 200 from /v5/market/kline
   [PASS] Layer 5: Parsed 3 BTCUSDT bars
   [PASS] Layer 6: BybitAdapter returned 3 OHLCVBar objects
 
@@ -29,7 +29,7 @@ Exit codes:
 Environment failure signatures:
   - Layer 1 resolves to 127.0.0.1 → local proxy is intercepting
   - Layer 3 cert CN != *.bybit.com → man-in-the-middle (proxy SSL inspection)
-  - Layer 4 returns 404 → proxy does not recognise the path
+  - Layer 4 returns 404 → wrong path or proxy does not recognise the path
   - Layer 4 returns 403 → geo-block or IP restriction
   - Connection refused → no local proxy and no internet
 """
@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 BYBIT_HOST = "api.bybit.com"
 BYBIT_PORT = 443
-KLINES_PATH = "/v5/market/klines"
+KLINES_PATH = "/v5/market/kline"
 TEST_SYMBOL = "BTCUSDT"
 TEST_INTERVAL = "60"
 TEST_LIMIT = 3

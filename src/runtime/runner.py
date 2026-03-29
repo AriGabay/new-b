@@ -357,35 +357,58 @@ class BtcBybitPaperRunner:
         """
         Live polling loop. Runs until max_bars reached or cancelled.
 
+        Polls Bybit every POLL_INTERVAL_SECONDS seconds.
+        New bars arrive at most once per interval period (e.g. once per hour
+        for interval="60"). Most polls will find no new bar and log "idle".
+
         For production: call with max_bars=None (runs indefinitely).
         For smoke tests: call with max_bars=3.
 
         Bybit connectivity must be available. Will log errors and continue
         on fetch failures — does not crash the loop.
+
+        Observability contract:
+          - Every poll cycle is logged (productive or idle).
+          - "NEW BAR" log confirms downstream chain was triggered.
+          - "idle" log confirms the chain was correctly skipped.
+          - "bars_processed" counts only genuine new bars, not poll cycles.
         """
         if self._simulation_mode:
             raise RuntimeError("Use simulate_bar() in simulation mode.")
 
         await self.startup_load()
         bars_processed = 0
+        poll_count = 0
         logger.info(
-            "Runner: starting paper loop (max_bars=%s, interval=%s).",
-            max_bars, interval,
+            "Runner: paper loop started "
+            "(max_bars=%s, interval=%s, poll_every=%ds).",
+            max_bars, interval, POLL_INTERVAL_SECONDS,
         )
 
         while self._running:
+            poll_count += 1
             try:
                 got_new = await self.run_one_bar(interval)
                 if got_new:
                     bars_processed += 1
-                    logger.debug("Runner: bar %d processed.", bars_processed)
+                    logger.info(
+                        "Runner: [poll #%d] NEW BAR — bar %d processed. "
+                        "Downstream chain triggered.",
+                        poll_count, bars_processed,
+                    )
                     if max_bars is not None and bars_processed >= max_bars:
                         logger.info("Runner: max_bars=%d reached, stopping.", max_bars)
                         break
+                else:
+                    logger.debug(
+                        "Runner: [poll #%d] idle — no new bar. "
+                        "Downstream chain not triggered. (bars_processed=%d)",
+                        poll_count, bars_processed,
+                    )
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error("Runner: poll error: %s", exc)
+                logger.error("Runner: [poll #%d] error: %s", poll_count, exc)
 
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
