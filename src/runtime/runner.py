@@ -7,6 +7,7 @@ for integration testing without live Bybit connectivity.
 
 Active groups (Layer A + gates + journal):
   MarketDataGroup         — data ingestion
+  ChartPatternGroup       — chart pattern state machines (Phase 6.4: DoubleBottomMachine active)
   IndicatorsGroup         — EMA/RSI/BB/ADX signals
   CandlestickGroup        — candlestick pattern signals
   TechnicalStructureGroup — S/R level signals
@@ -17,7 +18,6 @@ Active groups (Layer A + gates + journal):
   PerformanceJournalGroup — event journaling
 
 Excluded groups (stubbed — raise NotImplementedError if triggered):
-  ChartPatternGroup       — EXCLUDED: _process_features raises NotImplementedError
   NewsMacroGroup          — EXCLUDED: _process_bar_close raises NotImplementedError
 
 Learning layer:

@@ -31,6 +31,11 @@ TEST_FILES = [
     "src/tests/test_runtime_wiring.py",
     "src/tests/test_learning_layer.py",
     "src/tests/test_validation.py",
+    "src/tests/test_phase_6_1_observational.py",
+    "src/tests/test_phase_6_2_structural.py",
+    "src/tests/test_phase_6_3_natural_open.py",
+    "src/tests/test_phase_6_4_double_bottom.py",
+    "src/tests/test_phase_7_baseline.py",
 ]
 
 

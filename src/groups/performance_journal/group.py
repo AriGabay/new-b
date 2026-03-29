@@ -214,6 +214,30 @@ class PerformanceJournalGroup(BaseGroup):
                 else:
                     outcome = "breakeven"
                 setup_family = pos.setup_refs[0] if pos.setup_refs else "unknown"
+                # Fetch trader reviews from the learning DB so calibration
+                # updates can run.  Without this, trader_calibration stays empty
+                # because process_closed_trade defaults trader_reviews=None.
+                # BUG FIX (Phase 7): this was missing since Phase 4, causing
+                # trader_calibration to remain at 0 rows despite 34 attributions.
+                trader_reviews = None
+                if pos.packet_id and self._outcome_attributor._ext:
+                    try:
+                        trader_reviews = (
+                            self._outcome_attributor._ext
+                            .query_trader_reviews_by_packet(pos.packet_id)
+                        )
+                    except Exception as tr_exc:
+                        logger.debug(
+                            "PerformanceJournalGroup: trader reviews lookup: %s",
+                            tr_exc,
+                        )
+
+                direction_str = (
+                    pos.direction.value.upper()
+                    if hasattr(pos.direction, "value")
+                    else str(pos.direction).upper()
+                )
+
                 self._outcome_attributor.process_closed_trade(
                     trade_id=pos.position_id,
                     outcome=outcome,
@@ -225,6 +249,8 @@ class PerformanceJournalGroup(BaseGroup):
                     panel_id=pos.panel_id,
                     decision_id=pos.decision_id,
                     composite_score=pos.composite_score,
+                    trader_reviews=trader_reviews,
+                    direction=direction_str,
                 )
             except Exception as exc:
                 logger.warning(

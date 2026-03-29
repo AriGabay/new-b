@@ -506,6 +506,29 @@ class JournalExtension:
             logger.error("load_setup_family_record failed: %s", exc)
             return None
 
+    def query_trader_reviews_by_packet(self, packet_id: str) -> list[dict]:
+        """
+        Return trader review rows for a given packet_id.
+
+        Used by the attribution pipeline to fetch trader verdicts when
+        processing a closed trade, so TraderCalibrator can be updated.
+        """
+        if not packet_id:
+            return []
+        try:
+            self._conn.row_factory = sqlite3.Row
+            cursor = self._conn.cursor()
+            cursor.execute(
+                """SELECT trader_name, vote, score, confidence
+                   FROM trader_reviews WHERE packet_id = ?""",
+                (packet_id,),
+            )
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            logger.error("query_trader_reviews_by_packet failed: %s", exc)
+            return []
+
     def query_attributions_for_trader(
         self,
         trader_name: str,

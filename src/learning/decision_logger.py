@@ -120,7 +120,7 @@ class DecisionTraceLogger:
             review = StoredTraderReview(
                 review_id=str(uuid.uuid4()),
                 packet_id=packet_id,
-                trader_name=getattr(verdict, "trader_name", "unknown"),
+                trader_name=getattr(verdict, "trader_id", None) or getattr(verdict, "trader_name", "unknown"),
                 outcome_source=self._source,
                 vote=str(getattr(verdict, "vote", "")),
                 score=float(getattr(verdict, "score", 0.0)),
