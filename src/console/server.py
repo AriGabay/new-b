@@ -355,8 +355,8 @@ async def replay_fixtures():
 async def replay_run(body: dict = None):
     rm = get_replay_manager()
     b = body or {}
-    fixture_id = b.get("fixture_id", "btc_bear_continuation")
-    harness_type = b.get("harness_type", "true_replay")
+    fixture_id = b.get("fixture_id", "btc_bull_breakout_v1")
+    harness_type = b.get("harness_type", "simulation")
     run_id = await rm.run(fixture_id=fixture_id, harness_type=harness_type)
     return {"run_id": run_id, "message": "Replay started."}
 
