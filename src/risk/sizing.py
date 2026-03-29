@@ -12,10 +12,10 @@ R-multiple method:
   size_usd   = min(size_usd, equity × max_position_fraction)
 
 ATR stop placement:
-  LONG:  stop = entry - 2.0 × ATR14
+  LONG:  stop = entry - 1.5 × ATR14
          If stop falls on round number (e.g., $10,000), shift +0.5× ATR14
          below the round number to avoid stop-hunt clusters.
-  SHORT: stop = entry + 2.0 × ATR14
+  SHORT: stop = entry + 1.5 × ATR14
          If stop falls on round number, shift +0.5× ATR14 above.
 
 Source: /docs/risk_framework/risk_contract.md
@@ -28,7 +28,7 @@ from typing import Optional
 
 from core.schemas import Direction
 
-ATR_STOP_MULTIPLIER     = Decimal("2.0")
+ATR_STOP_MULTIPLIER     = Decimal("1.5")
 ROUND_NUMBER_SHIFT      = Decimal("0.5")    # × ATR14 away from round number
 DEFAULT_RISK_FRACTION   = Decimal("0.01")   # 1% of equity per R
 MAX_POSITION_FRACTION   = Decimal("0.10")   # 10% of equity max single position

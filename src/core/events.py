@@ -91,6 +91,8 @@ class PanelApprovedProposalEvent(SystemEvent):
     packet_id: str = ""
     panel_id: str = ""
     decision_id: str = ""
+    state_snapshot_id: str = ""   # mdp_transitions.transition_id for reward backfill
+    size_multiplier: float = 1.0  # MDP size modifier (0.5=small, 1.0=medium, 1.5=high)
 
 
 @dataclass
@@ -110,6 +112,8 @@ class PositionOpenEvent(SystemEvent):
 class PositionCloseEvent(SystemEvent):
     exit_signal: Optional[ExitSignal] = None
     final_position: Optional[Position] = None
+    reward_signal: float = 0.0         # risk-adjusted reward for MDP transition logger
+    state_snapshot_id: str = ""        # mdp_transitions.transition_id for reward backfill
 
 
 @dataclass

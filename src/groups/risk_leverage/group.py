@@ -80,7 +80,7 @@ PUMP_VOLUME_RATIO      = 5.0               # 5× normal volume = pump signal
 MIN_LEVERAGE           = 5.0               # Minimum leverage for any approved trade
 MAX_LEVERAGE           = 35.0              # Maximum leverage cap
 MAX_RISK_PER_TRADE     = 0.10              # 10% of equity max risk per trade
-DEFAULT_MAX_BARS       = 48                # Time stop: 48 bars (2 days on 1h)
+DEFAULT_MAX_BARS       = 72                # Time stop: 72 bars (3 days on 1h)
 
 # Portfolio exposure limits — in MARGIN terms (notional/leverage), not raw notional.
 # With leveraged futures, notional can be many × equity; we track margin utilization.
@@ -139,12 +139,14 @@ class RiskLeverageGroup(BaseGroup):
     async def _handle_event(self, event: SystemEvent) -> None:
         if isinstance(event, PanelApprovedProposalEvent) and event.proposal:
             # Primary wired path: proposal has passed Layer B+C.
-            # Thread packet_id/panel_id/decision_id so Position carries learning DB links.
+            # Thread all learning DB links and MDP size modifier into position.
             await self._evaluate_proposal(
                 event.proposal,
                 packet_id=event.packet_id,
                 panel_id=event.panel_id,
                 decision_id=event.decision_id,
+                state_snapshot_id=event.state_snapshot_id,
+                size_multiplier=event.size_multiplier,
             )
         elif isinstance(event, CandidateTradeEvent) and event.proposal:
             if self._panel_wired:
@@ -167,12 +169,16 @@ class RiskLeverageGroup(BaseGroup):
         packet_id: str = "",
         panel_id: str = "",
         decision_id: str = "",
+        state_snapshot_id: str = "",
+        size_multiplier: float = 1.0,
     ) -> None:
         """
         Run all 9 risk rules in order.
         Publish RiskDecisionEvent (approved or rejected).
         If approved: create Position, open in SystemState, publish PositionOpenEvent.
         packet_id/panel_id/decision_id link the Position to learning DB records.
+        state_snapshot_id links to mdp_transitions for reward backfill.
+        size_multiplier (0.5/1.0/1.5) scales position size per MDP action.
         """
         # Rule 1: Mode gate
         result = self._check_mode_gate(proposal)
@@ -226,8 +232,12 @@ class RiskLeverageGroup(BaseGroup):
             return
 
         # All rules passed — compute position size and approve
-        order = self._compute_order(proposal, event_risk_reduction)
-        await self._approve(proposal, order, packet_id=packet_id, panel_id=panel_id, decision_id=decision_id)
+        order = self._compute_order(proposal, event_risk_reduction, size_multiplier)
+        await self._approve(
+            proposal, order,
+            packet_id=packet_id, panel_id=panel_id, decision_id=decision_id,
+            state_snapshot_id=state_snapshot_id,
+        )
 
     # ------------------------------------------------------------------
     # Rule implementations (deterministic — no LLM, no external calls)
@@ -413,6 +423,7 @@ class RiskLeverageGroup(BaseGroup):
         self,
         proposal: CandidateTradeProposal,
         size_reduction: Decimal,
+        size_multiplier: float = 1.0,
     ) -> RiskApprovedOrder:
         """
         Compute position size using leverage-driven model for perpetual futures.
@@ -435,19 +446,19 @@ class RiskLeverageGroup(BaseGroup):
         placer = ATRStopPlacer()
         stop_price = placer.compute(proposal.entry_price, proposal.direction, atr14)
 
-        # Compute target: 2× stop distance
+        # Compute target: 3× stop distance (3:1 R:R minimum)
         stop_dist = abs(proposal.entry_price - stop_price)
         stop_dist_pct = float(stop_dist / proposal.entry_price) if proposal.entry_price > 0 else 0.025
         if proposal.direction == Direction.LONG:
-            target_price = proposal.entry_price + stop_dist * Decimal("2")
+            target_price = proposal.entry_price + stop_dist * Decimal("3")
         else:
-            target_price = proposal.entry_price - stop_dist * Decimal("2")
+            target_price = proposal.entry_price - stop_dist * Decimal("3")
 
         # Compute leverage from setup quality and conditions
         leverage = self._compute_leverage(proposal, stop_dist_pct)
 
-        # Position size from leverage (apply event-risk size_reduction)
-        size_usd = equity * Decimal(str(leverage)) * size_reduction
+        # Position size from leverage (apply event-risk size_reduction and MDP size_multiplier)
+        size_usd = equity * Decimal(str(leverage)) * size_reduction * Decimal(str(size_multiplier))
         size_base = size_usd / proposal.entry_price if proposal.entry_price > 0 else Decimal("0")
 
         # R amount = actual risk in USD (for exit trailing-stop logic and tracking)
@@ -491,13 +502,15 @@ class RiskLeverageGroup(BaseGroup):
         packet_id: str = "",
         panel_id: str = "",
         decision_id: str = "",
+        state_snapshot_id: str = "",
     ) -> None:
         """
         Publish RiskDecisionEvent (approved), create Position in SystemState,
         and publish PositionOpenEvent so ExitGroup and Journal receive it.
 
-        packet_id/panel_id/decision_id are threaded from PanelApprovedProposalEvent
-        so the Position carries DB links to the learning layer records.
+        All learning DB link IDs are threaded from PanelApprovedProposalEvent
+        so the Position carries full links to learning layer records.
+        state_snapshot_id enables reward backfill on position close.
         """
         from core.schemas import Position
 
@@ -524,6 +537,7 @@ class RiskLeverageGroup(BaseGroup):
             packet_id=packet_id,
             panel_id=panel_id,
             decision_id=decision_id,
+            state_snapshot_id=state_snapshot_id,
             setup_refs=list(getattr(proposal, "setup_refs", []) or []),
             hypothesis_refs=list(getattr(proposal, "hypothesis_refs", []) or []),
         )

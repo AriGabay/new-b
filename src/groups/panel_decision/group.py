@@ -32,6 +32,7 @@ from core.events import (
     CandidateTradeEvent,
     EventBus,
     PanelApprovedProposalEvent,
+    PositionCloseEvent,
     SystemEvent,
 )
 from core.registry import GroupID
@@ -102,7 +103,10 @@ class PanelDecisionGroup(BaseGroup):
         from decision.final_group import FinalDecisionGroup
 
         self._panel = TraderEvaluatorPanel()
-        self._decision_group = FinalDecisionGroup()
+        self._decision_group = FinalDecisionGroup(
+            system_state=self.state,
+            journal_extension=self._journal_extension,
+        )
 
         # Wire trace logger if journal extension provided
         if self._journal_extension is not None and self._outcome_source is not None:
@@ -112,6 +116,7 @@ class PanelDecisionGroup(BaseGroup):
             )
 
         await self.bus.subscribe(CandidateTradeEvent, self.handle_event)
+        await self.bus.subscribe(PositionCloseEvent, self.handle_event)
         logger.info(
             "PanelDecisionGroup ready: 20-trader panel + FinalDecisionGroup wired. "
             "TraceLogger=%s",
@@ -121,6 +126,8 @@ class PanelDecisionGroup(BaseGroup):
     async def _handle_event(self, event: SystemEvent) -> None:
         if isinstance(event, CandidateTradeEvent) and event.proposal:
             await self._evaluate_proposal(event.proposal)
+        elif isinstance(event, PositionCloseEvent):
+            await self._backfill_reward(event)
 
     async def _evaluate_proposal(self, proposal) -> None:
         """
@@ -236,6 +243,8 @@ class PanelDecisionGroup(BaseGroup):
                     packet_id=packet_id,
                     panel_id=panel_id,
                     decision_id=decision_id,
+                    state_snapshot_id=final_decision.state_snapshot_id,
+                    size_multiplier=final_decision.size_multiplier,
                 )
             )
         else:
@@ -247,3 +256,83 @@ class PanelDecisionGroup(BaseGroup):
                 panel_result.avg_score,
                 getattr(final_decision, "safety_rails_triggered", []),
             )
+
+    async def _backfill_reward(self, event: PositionCloseEvent) -> None:
+        """
+        Called on PositionCloseEvent. Performs three operations:
+          1. Backfill reward into mdp_transitions (TransitionLogger.update_reward).
+          2. Write OutcomeAttribution record linking trade → decision trace.
+          3. Backfill trade_id into setup_packets / trader_reviews / panel_summaries /
+             final_decisions so all decision-trace tables are linked to the trade.
+
+        Silently does nothing when journal is not wired or IDs are missing.
+        """
+        position = getattr(event, "final_position", None)
+        exit_signal = getattr(event, "exit_signal", None)
+        trade_id = getattr(position, "position_id", "") if position else ""
+
+        # --- 1. Reward backfill into mdp_transitions ---
+        if self._decision_group is not None:
+            transition_logger = getattr(self._decision_group, "_transition_logger", None)
+            if transition_logger is not None:
+                state_snapshot_id = getattr(event, "state_snapshot_id", "")
+                if state_snapshot_id:
+                    reward = getattr(event, "reward_signal", 0.0)
+                    try:
+                        transition_logger.update_reward(
+                            transition_id=state_snapshot_id,
+                            reward=reward,
+                            trade_id=trade_id or None,
+                        )
+                        logger.debug(
+                            "PanelDecisionGroup: reward backfilled for transition %s → %.3f",
+                            state_snapshot_id[:8], reward,
+                        )
+                    except Exception as exc:
+                        logger.warning("PanelDecisionGroup: reward backfill failed: %s", exc)
+
+        # --- 2. Outcome attribution ---
+        if self._trace_logger is None or not position or not exit_signal:
+            return
+
+        packet_id = getattr(position, "packet_id", "") or ""
+        panel_id = getattr(position, "panel_id", "") or ""
+        decision_id = getattr(position, "decision_id", "") or ""
+        pnl_r = float(getattr(exit_signal, "pnl_r", 0.0))
+        bars_held = int(getattr(exit_signal, "bars_held", 0))
+        exit_reason_raw = getattr(exit_signal, "exit_reason", "")
+        exit_reason = (
+            exit_reason_raw.value
+            if hasattr(exit_reason_raw, "value")
+            else str(exit_reason_raw)
+        )
+        if pnl_r > 0.0:
+            outcome = "win"
+        elif pnl_r < 0.0:
+            outcome = "loss"
+        else:
+            outcome = "breakeven"
+        setup_refs = getattr(position, "setup_refs", []) or []
+        setup_family = setup_refs[0] if setup_refs else "unknown"
+
+        try:
+            self._trace_logger.log_outcome_attribution(
+                trade_id=trade_id,
+                packet_id=packet_id or None,
+                panel_id=panel_id or None,
+                decision_id=decision_id or None,
+                outcome=outcome,
+                pnl_r=pnl_r,
+                exit_reason=exit_reason,
+                bars_held=bars_held,
+                setup_family=setup_family,
+            )
+        except Exception as exc:
+            logger.warning("PanelDecisionGroup: outcome attribution failed: %s", exc)
+
+        # --- 3. Backfill trade_id into decision-trace tables ---
+        if packet_id and trade_id:
+            try:
+                self._journal_extension.backfill_trade_id_for_packet(packet_id, trade_id)
+            except Exception as exc:
+                logger.warning("PanelDecisionGroup: trade_id backfill failed: %s", exc)

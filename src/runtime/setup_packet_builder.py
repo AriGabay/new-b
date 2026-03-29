@@ -302,6 +302,7 @@ def build_setup_proposal(
         confirming_signals=getattr(proposal, "setup_refs", []) or [],
         conflicting_signals=[],
         primary_thesis=getattr(proposal, "thesis", f"{proposal.direction} on {proposal.symbol}"),
+        composite_score=proposal.composite_score,
     )
 
 

@@ -60,14 +60,14 @@ class TraderEvaluatorPanel:
     """
     Orchestrates all 20 trader evaluators.
 
-    Decision threshold: >= 14/20 approve AND avg_score >= 6.5 → "enter"
-    Soft threshold: 10-13 approve → "hold"
-    Hard reject: < 10 approve → "hold" (force no trade)
+    Decision threshold: >= 11/20 approve AND avg_score >= 5.8 → "enter"
+    Soft threshold: 8-10 approve → "hold"
+    Hard reject: < 8 approve → "hold" (force no trade)
     """
 
-    APPROVE_THRESHOLD = 14   # need 14/20 to enter
-    MIN_AVG_SCORE = 6.5      # need avg score >= 6.5
-    AVG_SCORE_THRESHOLD = 6.5  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
+    APPROVE_THRESHOLD = 11   # need 11/20 to enter
+    MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
+    AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
 
     def __init__(self) -> None:
         self._evaluators = [

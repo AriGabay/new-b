@@ -54,15 +54,16 @@ class JournalExtension:
         self._conn = conn
 
     def initialize(self) -> None:
-        """Create all 6 new tables if not exist."""
+        """Create all learning-layer tables if not exist."""
         self._create_setup_packets_table()
         self._create_trader_reviews_table()
         self._create_panel_summaries_table()
         self._create_final_decisions_table()
         self._create_outcome_attributions_table()
         self._create_calibration_tables()
+        self._create_mdp_transitions_table()
         self._conn.commit()
-        logger.info("JournalExtension: 6 learning-layer tables initialized.")
+        logger.info("JournalExtension: learning-layer tables initialized (incl. mdp_transitions).")
 
     def _create_setup_packets_table(self) -> None:
         self._conn.execute("""
@@ -147,6 +148,26 @@ class JournalExtension:
                 bars_held       INTEGER,
                 setup_family    TEXT,
                 attributed_at   TEXT
+            )
+        """)
+
+    def _create_mdp_transitions_table(self) -> None:
+        """
+        MDP transition log — (state, action, reward, next_state) tuples.
+        Populated by TransitionLogger (src/mdp/transition_logger.py).
+        reward is NULL until trade closes; backfilled via update_reward().
+        """
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS mdp_transitions (
+                transition_id   TEXT PRIMARY KEY,
+                timestamp       TEXT NOT NULL,
+                episode_id      TEXT NOT NULL,
+                state_json      TEXT NOT NULL,
+                action          TEXT NOT NULL,
+                reasoning       TEXT NOT NULL,
+                reward          REAL,
+                next_state_json TEXT,
+                trade_id        TEXT
             )
         """)
 
@@ -306,6 +327,31 @@ class JournalExtension:
             self._conn.commit()
         except Exception as exc:
             logger.error("insert_final_decision failed: %s", exc)
+
+    def backfill_trade_id_for_packet(self, packet_id: str, trade_id: str) -> None:
+        """
+        Backfill trade_id into setup_packets, trader_reviews, panel_summaries,
+        and final_decisions for the given packet_id.
+
+        Called when a position closes so that all decision-trace records
+        are linked to their closed trade for reverse lookup.
+        """
+        if not packet_id or not trade_id:
+            return
+        try:
+            for table in ("setup_packets", "trader_reviews", "panel_summaries"):
+                self._conn.execute(
+                    f"UPDATE {table} SET trade_id=? WHERE packet_id=? AND trade_id IS NULL",
+                    (trade_id, packet_id),
+                )
+            # final_decisions links via panel_id not packet_id directly; use packet_id too
+            self._conn.execute(
+                "UPDATE final_decisions SET trade_id=? WHERE packet_id=? AND trade_id IS NULL",
+                (trade_id, packet_id),
+            )
+            self._conn.commit()
+        except Exception as exc:
+            logger.error("backfill_trade_id_for_packet failed: %s", exc)
 
     def insert_outcome_attribution(self, attr: OutcomeAttribution) -> None:
         try:

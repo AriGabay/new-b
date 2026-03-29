@@ -4,9 +4,11 @@ Exit Group (Group 8 — always_on=False, implementation_priority=3).
 Responsibilities:
   - Monitor all open positions against each new bar.
   - Check stop loss (fixed and trailing), target, time stop.
+  - Apply partial profit taking at +1R (30%) and +2R (20%).
+  - Apply breakeven time stop if bars_held >= 24 and not at +0.3R.
   - Emit ExitSignal when any exit condition is triggered.
   - Update trailing stop on favorable price movement.
-  - Publish PositionCloseEvent via EventBus.
+  - Publish PositionCloseEvent (with reward_signal) via EventBus.
 
 LLM: NOT permitted.
 Trigger: FeatureReadyEvent (checks open positions on each bar close).
@@ -18,15 +20,25 @@ Phase 2 deliverable: Stop loss exit, target exit, time stop exit.
 Exit priority (first condition triggered wins):
   1. Hard stop loss   — price crosses stop_price (LONG: low ≤ stop; SHORT: high ≥ stop)
   2. Target reached   — price crosses target_price (LONG: high ≥ target; SHORT: low ≤ target)
-  3. Trailing stop    — trailing_stop_price set after 1R favorable move
-  4. Time stop        — bars_held ≥ MAX_BARS_TO_HOLD (48 bars = 2 days on 1h)
+  3. Trailing stop    — trailing_stop_price set after +0.75R favorable move
+  4. Time stop        — bars_held ≥ MAX_BARS_TO_HOLD (72 bars = 3 days on 1h)
   5. Signal reversal  — opposing ChartPattern/Indicator signal (advisory, not forced)
 
 Trailing stop rules:
-  - Activate when position reaches +1R (favorable).
-  - Set trailing stop at entry_price (breakeven) initially.
-  - Move to highest/lowest close − 2×ATR14 as position moves favorably.
+  - Activate when position reaches +0.75R (favorable).
+  - Initial trail distance: 1.5×ATR14.
+  - Tighten to 1.0×ATR14 after +1.5R.
+  - Tighten to 0.6×ATR14 after +2.5R.
   - Never widen trailing stop.
+
+Partial profit taking:
+  - At +1R: close 30% of position (remaining_fraction → 0.70).
+  - At +2R: close additional 20% (remaining_fraction → 0.50).
+  - Remaining 50% rides trailing stop.
+
+Breakeven time stop:
+  - At bars_held >= 24 AND pnl_r < +0.3R: move stop to entry_price (breakeven).
+  - Does not exit — just tightens stop.
 
 Source: /docs/agent_registry/group_registry.md (EXIT entry)
         /docs/risk_framework/risk_contract.md
@@ -50,7 +62,25 @@ from core.state import SystemState
 
 logger = logging.getLogger(__name__)
 
-MAX_BARS_TO_HOLD = 48   # 48 bars = 2 days on 1h timeframe
+MAX_BARS_TO_HOLD = 72   # 72 bars = 3 days on 1h timeframe
+
+# Trailing stop activation and tightening thresholds (in R-multiples)
+TRAIL_ACTIVATE_R     = 0.75  # activate trailing stop at +0.75R
+TRAIL_ATR_INITIAL    = Decimal("1.5")  # initial trail distance (×ATR14)
+TRAIL_ATR_TIGHT_1    = Decimal("1.0")  # tighten to ×ATR14 after +1.5R
+TRAIL_ATR_TIGHT_2    = Decimal("0.6")  # tighten further after +2.5R
+TRAIL_TIGHT_1_R      = 1.5   # R-multiple at which first tightening applies
+TRAIL_TIGHT_2_R      = 2.5   # R-multiple at which second tightening applies
+
+# Partial profit taking thresholds
+PARTIAL_1_R          = 1.0   # take 30% off at +1R
+PARTIAL_1_FRACTION   = 0.30
+PARTIAL_2_R          = 2.0   # take 20% off at +2R
+PARTIAL_2_FRACTION   = 0.20
+
+# Breakeven time stop
+BREAKEVEN_BARS       = 24    # apply breakeven stop after 24 bars if not +0.3R
+BREAKEVEN_MIN_R      = 0.3   # minimum R-multiple to avoid breakeven stop
 
 
 class ExitGroup(BaseGroup):
@@ -132,11 +162,16 @@ class ExitGroup(BaseGroup):
         3. Trailing stop triggered
         4. Time stop (bars_held >= MAX_BARS_TO_HOLD)
 
-        Before checking, update trailing stop if position is favorable.
+        Before checking, update trailing stop and apply partial profit taking.
+        Breakeven time stop: if bars_held >= BREAKEVEN_BARS and pnl_r < BREAKEVEN_MIN_R,
+        tighten stop to entry_price (no forced exit — just stops a drawback).
 
         Note: entry-bar skipping is handled by _check_exits (skip_ids).
         This method is only called for bars AFTER the entry bar.
         """
+        # Apply partial profit taking (updates remaining_fraction in-place)
+        self._apply_partial_exits(position, features)
+
         # Update trailing stop (ratchet only — never widens)
         new_trail = self._update_trailing_stop(position, features)
         if new_trail is not None:
@@ -145,6 +180,9 @@ class ExitGroup(BaseGroup):
                 "Position %s: trailing stop updated to %s",
                 position.position_id, new_trail,
             )
+
+        # Breakeven time stop: tighten to entry_price if stalled
+        self._apply_breakeven_stop(position, features)
 
         # 1. Hard stop loss
         if self._check_stop_loss(position, features):
@@ -202,6 +240,138 @@ class ExitGroup(BaseGroup):
         position.bars_held += 1
         return None
 
+    def _apply_partial_exits(self, position: Position, features: FeatureVector) -> None:
+        """
+        Record partial profit exits at +1R and +2R thresholds.
+        Updates position.remaining_fraction and position.partial_exits in-place.
+        Does NOT emit events — locked profits are included in final PnL via _compute_pnl.
+
+        LONG:  +nR when high >= entry + n × (entry - stop)
+        SHORT: +nR when low  <= entry - n × (stop - entry)
+        """
+        if position.r_amount <= 0 or position.entry_price <= 0:
+            return
+
+        if position.direction == Direction.LONG:
+            r_dist = position.entry_price - position.stop_price
+            current_r = (
+                float((features.high - position.entry_price) / r_dist)
+                if r_dist > 0 else 0.0
+            )
+        else:
+            r_dist = position.stop_price - position.entry_price
+            current_r = (
+                float((position.entry_price - features.low) / r_dist)
+                if r_dist > 0 else 0.0
+            )
+
+        # Determine which partial exits have already been taken
+        taken_partials = {pe["level"] for pe in position.partial_exits}
+
+        # +1R partial: take 30% off
+        if current_r >= PARTIAL_1_R and "1R" not in taken_partials:
+            if position.remaining_fraction > PARTIAL_1_FRACTION:
+                partial_price = (
+                    position.entry_price + r_dist
+                    if position.direction == Direction.LONG
+                    else position.entry_price - r_dist
+                )
+                size_base = position.position_size_usd / position.entry_price
+                partial_size = size_base * Decimal(str(PARTIAL_1_FRACTION))
+                if position.direction == Direction.LONG:
+                    partial_pnl = (partial_price - position.entry_price) * partial_size
+                else:
+                    partial_pnl = (position.entry_price - partial_price) * partial_size
+
+                position.partial_exits.append({
+                    "level": "1R",
+                    "fraction": PARTIAL_1_FRACTION,
+                    "price": float(partial_price),
+                    "pnl_usd": float(partial_pnl),
+                })
+                position.remaining_fraction = round(
+                    position.remaining_fraction - PARTIAL_1_FRACTION, 6
+                )
+                logger.debug(
+                    "Position %s: partial exit at +1R (%.0f%% → remaining=%.0f%%)",
+                    position.position_id,
+                    PARTIAL_1_FRACTION * 100,
+                    position.remaining_fraction * 100,
+                )
+
+        # +2R partial: take 20% off
+        if current_r >= PARTIAL_2_R and "2R" not in taken_partials:
+            if position.remaining_fraction > PARTIAL_2_FRACTION:
+                partial_price = (
+                    position.entry_price + 2 * r_dist
+                    if position.direction == Direction.LONG
+                    else position.entry_price - 2 * r_dist
+                )
+                size_base = position.position_size_usd / position.entry_price
+                partial_size = size_base * Decimal(str(PARTIAL_2_FRACTION))
+                if position.direction == Direction.LONG:
+                    partial_pnl = (partial_price - position.entry_price) * partial_size
+                else:
+                    partial_pnl = (position.entry_price - partial_price) * partial_size
+
+                position.partial_exits.append({
+                    "level": "2R",
+                    "fraction": PARTIAL_2_FRACTION,
+                    "price": float(partial_price),
+                    "pnl_usd": float(partial_pnl),
+                })
+                position.remaining_fraction = round(
+                    position.remaining_fraction - PARTIAL_2_FRACTION, 6
+                )
+                logger.debug(
+                    "Position %s: partial exit at +2R (%.0f%% → remaining=%.0f%%)",
+                    position.position_id,
+                    PARTIAL_2_FRACTION * 100,
+                    position.remaining_fraction * 100,
+                )
+
+    def _apply_breakeven_stop(self, position: Position, features: FeatureVector) -> None:
+        """
+        Breakeven time stop: if bars_held >= BREAKEVEN_BARS and current pnl_r < BREAKEVEN_MIN_R,
+        tighten stop to entry_price.  Does NOT force an exit — just moves the stop.
+        Only applies if stop has not already been moved above entry (for LONG) or
+        below entry (for SHORT) by the trailing stop logic.
+        """
+        if position.bars_held < BREAKEVEN_BARS:
+            return
+        if position.r_amount <= 0 or position.entry_price <= 0:
+            return
+
+        # Compute current unrealized R
+        if position.direction == Direction.LONG:
+            r_dist = position.entry_price - position.stop_price
+            current_r = (
+                float((features.close - position.entry_price) / r_dist)
+                if r_dist > 0 else 0.0
+            )
+            if current_r < BREAKEVEN_MIN_R:
+                if position.stop_price < position.entry_price:
+                    position.stop_price = position.entry_price
+                    logger.debug(
+                        "Position %s: breakeven stop applied at %s (bars=%d, pnl_r=%.2f)",
+                        position.position_id, position.entry_price,
+                        position.bars_held, current_r,
+                    )
+        else:  # SHORT
+            r_dist = position.stop_price - position.entry_price
+            current_r = (
+                float((position.entry_price - features.close) / r_dist)
+                if r_dist > 0 else 0.0
+            )
+            if current_r < BREAKEVEN_MIN_R:
+                if position.stop_price > position.entry_price:
+                    position.stop_price = position.entry_price
+                    logger.debug(
+                        "Position %s: breakeven stop applied at %s (bars=%d, pnl_r=%.2f)",
+                        position.position_id, position.entry_price,
+                        position.bars_held, current_r,
+                    )
+
     def _check_stop_loss(self, position: Position, features: FeatureVector) -> bool:
         if position.direction == Direction.LONG:
             return features.low <= position.stop_price
@@ -224,36 +394,61 @@ class ExitGroup(BaseGroup):
 
     def _update_trailing_stop(self, position: Position, features: FeatureVector) -> Optional[Decimal]:
         """
-        Activate trailing stop once position reaches +1R.
-        LONG:  trail = max(existing_trail, close - 2*ATR14). Never lower than entry (breakeven).
-        SHORT: trail = min(existing_trail, close + 2*ATR14). Never higher than entry.
+        Activate trailing stop once position reaches +0.75R.
+
+        Trail distance is tightened as trade progresses:
+          - Default:      1.5×ATR14
+          - After +1.5R:  1.0×ATR14
+          - After +2.5R:  0.6×ATR14
+
+        Never widens trailing stop (ratchet rule).
         """
         if position.r_amount <= 0:
             return None
 
         if position.direction == Direction.LONG:
-            one_r_distance = position.entry_price - position.stop_price
-            at_favorable = features.close >= position.entry_price + one_r_distance
-
-            if not at_favorable:
+            r_dist = position.entry_price - position.stop_price
+            if r_dist <= 0:
                 return None
 
+            current_r = float((features.close - position.entry_price) / r_dist)
+            if current_r < TRAIL_ACTIVATE_R:
+                return None
+
+            # Select trail ATR multiplier based on current R level
+            if current_r >= TRAIL_TIGHT_2_R:
+                atr_mult = TRAIL_ATR_TIGHT_2
+            elif current_r >= TRAIL_TIGHT_1_R:
+                atr_mult = TRAIL_ATR_TIGHT_1
+            else:
+                atr_mult = TRAIL_ATR_INITIAL
+
             breakeven = position.entry_price
-            candidate = features.close - 2 * features.atr14
+            candidate = features.close - atr_mult * features.atr14
             new_trail = max(breakeven, candidate)
 
             if position.trailing_stop_price is None or new_trail > position.trailing_stop_price:
                 return new_trail
 
         else:  # SHORT
-            one_r_distance = position.stop_price - position.entry_price
-            at_favorable = features.close <= position.entry_price - one_r_distance
-
-            if not at_favorable:
+            r_dist = position.stop_price - position.entry_price
+            if r_dist <= 0:
                 return None
 
+            current_r = float((position.entry_price - features.close) / r_dist)
+            if current_r < TRAIL_ACTIVATE_R:
+                return None
+
+            # Select trail ATR multiplier based on current R level
+            if current_r >= TRAIL_TIGHT_2_R:
+                atr_mult = TRAIL_ATR_TIGHT_2
+            elif current_r >= TRAIL_TIGHT_1_R:
+                atr_mult = TRAIL_ATR_TIGHT_1
+            else:
+                atr_mult = TRAIL_ATR_INITIAL
+
             breakeven = position.entry_price
-            candidate = features.close + 2 * features.atr14
+            candidate = features.close + atr_mult * features.atr14
             new_trail = min(breakeven, candidate)
 
             if position.trailing_stop_price is None or new_trail < position.trailing_stop_price:
@@ -263,42 +458,66 @@ class ExitGroup(BaseGroup):
 
     def _compute_pnl(self, position: Position, exit_price: Decimal) -> tuple[Decimal, float]:
         """
-        pnl_usd = price_diff * size_base_units
-        size_base_units = position_size_usd / entry_price
-        pnl_r = pnl_usd / r_amount
+        Compute total PnL including locked profits from partial exits.
+
+        Total PnL = locked_pnl (from partial_exits) + remaining_fraction × open_pnl
+
+        pnl_r = total_pnl_usd / r_amount  (R-multiple of FULL original position)
         """
         if position.entry_price <= 0:
             return Decimal("0"), 0.0
 
         size_base = position.position_size_usd / position.entry_price
 
+        # Remaining open position PnL
+        remaining_size = size_base * Decimal(str(position.remaining_fraction))
         if position.direction == Direction.LONG:
-            pnl_usd = (exit_price - position.entry_price) * size_base
+            open_pnl = (exit_price - position.entry_price) * remaining_size
         else:
-            pnl_usd = (position.entry_price - exit_price) * size_base
+            open_pnl = (position.entry_price - exit_price) * remaining_size
 
-        pnl_r = float(pnl_usd / position.r_amount) if position.r_amount > 0 else 0.0
-        return pnl_usd, pnl_r
+        # Locked PnL from partial exits
+        locked_pnl = sum(
+            Decimal(str(pe.get("pnl_usd", 0.0))) for pe in position.partial_exits
+        )
+
+        total_pnl = locked_pnl + open_pnl
+        pnl_r = float(total_pnl / position.r_amount) if position.r_amount > 0 else 0.0
+        return total_pnl, pnl_r
 
     async def _execute_exit(self, position: Position, exit_signal: ExitSignal) -> None:
         """
         Finalize exit:
         1. Call state.close_position(position_id, pnl_usd).
-        2. Publish PositionCloseEvent(exit_signal, final_position).
+        2. Compute reward signal via RewardComputer.
+        3. Publish PositionCloseEvent(exit_signal, final_position, reward_signal).
         """
+        from core.reward import RewardComputer
+
         await self.state.close_position(position.position_id, exit_signal.pnl_usd)
+
+        # Build account_state for reward computation
+        portfolio = self.state.portfolio
+        account_state = {
+            "drawdown_pct": getattr(portfolio, "drawdown_pct", 0.0),
+            "recent_trade_count": getattr(portfolio, "recent_trade_count", 0),
+        }
+        reward = RewardComputer().compute(position, exit_signal, account_state)
+
         await self.bus.publish(
             PositionCloseEvent(
                 source=self.group_id.value,
                 exit_signal=exit_signal,
                 final_position=position,
+                reward_signal=reward,
+                state_snapshot_id=getattr(position, "state_snapshot_id", ""),
             )
         )
         from utils.bar_duration import format_bars
         tf = getattr(position, "timeframe", "1h") or "1h"
         logger.info(
-            "Position %s closed: %s at %s after %s. PnL: $%.2f (%.2fR)",
+            "Position %s closed: %s at %s after %s. PnL: $%.2f (%.2fR) reward=%.3f",
             position.position_id, exit_signal.exit_reason.value,
             exit_signal.exit_price, format_bars(exit_signal.bars_held, tf),
-            exit_signal.pnl_usd, exit_signal.pnl_r,
+            exit_signal.pnl_usd, exit_signal.pnl_r, reward,
         )

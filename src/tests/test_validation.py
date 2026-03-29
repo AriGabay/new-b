@@ -537,8 +537,8 @@ def test_threshold_analyzer_has_production_row():
     report = analyzer.analyze(records)
     prod_rows = [r for r in report["rows"] if r.get("is_production")]
     assert len(prod_rows) == 1
-    assert prod_rows[0]["approve_threshold"] == 14
-    assert prod_rows[0]["min_avg_score"] == 6.5
+    assert prod_rows[0]["approve_threshold"] == 11
+    assert prod_rows[0]["min_avg_score"] == 5.8
 
 
 def test_threshold_analyzer_production_threshold_not_mutated():
@@ -572,7 +572,11 @@ def test_threshold_analyzer_8_scenarios():
 
 
 def test_threshold_analyzer_enter_rates_monotone():
-    """Stricter thresholds must produce <= enter rate than lenient ones."""
+    """Stricter thresholds must produce <= enter rate than lenient ones.
+    Sort rows by (approve_threshold, min_avg_score) before checking so that
+    the production row (which may be more lenient than adjacent labeled rows)
+    appears in the correct position.
+    """
     from validation.panel_analyzer import PanelBatchRunner
     from validation.threshold_analyzer import PanelThresholdSensitivityAnalyzer
     from validation.scenario_loader import get_all_standard_scenarios
@@ -580,11 +584,15 @@ def test_threshold_analyzer_enter_rates_monotone():
     records = runner.run_batch(get_all_standard_scenarios())
     analyzer = PanelThresholdSensitivityAnalyzer()
     report = analyzer.analyze(records)
-    rates = [r["enter_rate"] for r in report["rows"]]
-    # Each subsequent threshold is stricter — rates should be non-increasing
+    # Sort by strictness (higher threshold = stricter) before checking monotone
+    sorted_rows = sorted(
+        report["rows"],
+        key=lambda r: (r["approve_threshold"], r["min_avg_score"])
+    )
+    rates = [r["enter_rate"] for r in sorted_rows]
     for i in range(len(rates) - 1):
         assert rates[i] >= rates[i+1], (
-            f"Non-monotone: row[{i}]={rates[i]} < row[{i+1}]={rates[i+1]}"
+            f"Non-monotone (by threshold): row[{i}]={rates[i]} < row[{i+1}]={rates[i+1]}"
         )
 
 

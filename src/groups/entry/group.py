@@ -81,6 +81,7 @@ logger = logging.getLogger(__name__)
 CONFIRMATION_GATE_MIN_GROUPS = 2
 COMPOSITE_SCORE_THRESHOLD    = 0.50
 CRITIC_SCORE_THRESHOLD       = 0.60
+SINGLE_SIGNAL_HIGH_CONFIDENCE = 0.80  # bypass min-groups gate if quality_score >= this
 
 # ---------------------------------------------------------------------------
 # Active score component weights (Phase 3)
@@ -265,11 +266,23 @@ class EntryGroup(BaseGroup):
 
         if len(long_signals) < CONFIRMATION_GATE_MIN_GROUPS and \
                 len(short_signals) < CONFIRMATION_GATE_MIN_GROUPS:
-            logger.debug(
-                "EntryGroup: confirmation gate not met for %s (L=%d S=%d)",
-                symbol, len(long_signals), len(short_signals),
+            # Single high-confidence signal bypass
+            max_quality_all = max(
+                (getattr(s, "quality_score", 0.0) for s in all_signals), default=0.0
             )
-            return
+            if max_quality_all < SINGLE_SIGNAL_HIGH_CONFIDENCE:
+                logger.debug(
+                    "EntryGroup: confirmation gate not met for %s (L=%d S=%d) "
+                    "and max quality_score %.2f < %.2f — suppressed.",
+                    symbol, len(long_signals), len(short_signals),
+                    max_quality_all, SINGLE_SIGNAL_HIGH_CONFIDENCE,
+                )
+                return
+            logger.debug(
+                "EntryGroup: single high-confidence bypass for %s "
+                "(max quality_score=%.2f >= %.2f).",
+                symbol, max_quality_all, SINGLE_SIGNAL_HIGH_CONFIDENCE,
+            )
 
         # Choose the majority direction; ties go to LONG (conservative bias in
         # bull markets is more appropriate than arbitrary SHORT bias).
@@ -281,28 +294,15 @@ class EntryGroup(BaseGroup):
             primary_signals = short_signals
 
         # ------------------------------------------------------------------
-        # 5a. Bar-level confirmation gate: require candlestick or chart_pattern
+        # 5a. Bar-level confirmation flag (no longer a hard gate)
         # ------------------------------------------------------------------
-        # The panel's Candlestick evaluator scores 4.0 (abstain/reject) when no
-        # pattern is present.  WickAnalysis and MarketContext also score poorly
-        # without candlestick context.  Proposals that are pure indicator signals
-        # carry ema_alignment="mixed" or "partial" (crossover-transition bars) and
-        # are structurally unable to reach the panel's avg_score >= 6.5 threshold.
-        #
-        # Enforcing bar-level confirmation here means the composite score will
-        # always include non-zero candlestick_quality, and the setup packet will
-        # carry a real pattern for the panel evaluators to score.
+        # Pure indicator proposals are allowed when composite_score >= 0.60
+        # (CRITIC_SCORE_THRESHOLD) or any signal has quality_score >= 0.80.
+        # The actual check is deferred until after composite_score is computed.
         has_bar_level_confirmation = any(
             getattr(s, "signal_type", "") in ("candlestick", "chart_pattern")
             for s in primary_signals
         )
-        if not has_bar_level_confirmation:
-            logger.debug(
-                "EntryGroup: no candlestick/chart_pattern confirmation for %s "
-                "(%s) — indicator-only proposals suppressed (panel incompatible).",
-                symbol, direction.value,
-            )
-            return
 
         # ------------------------------------------------------------------
         # 5b. Regime filter: block LONGs in confirmed bear macro
@@ -329,6 +329,31 @@ class EntryGroup(BaseGroup):
                 composite_score, COMPOSITE_SCORE_THRESHOLD, symbol,
             )
             return
+
+        # ------------------------------------------------------------------
+        # 6b. Deferred bar-level gate: pure indicator proposals need either
+        #     composite_score >= CRITIC_SCORE_THRESHOLD (0.60) or at least
+        #     one signal with quality_score >= SINGLE_SIGNAL_HIGH_CONFIDENCE (0.80).
+        # ------------------------------------------------------------------
+        if not has_bar_level_confirmation:
+            max_quality = max(
+                (getattr(s, "quality_score", 0.0) for s in primary_signals), default=0.0
+            )
+            if composite_score < CRITIC_SCORE_THRESHOLD and \
+                    max_quality < SINGLE_SIGNAL_HIGH_CONFIDENCE:
+                logger.debug(
+                    "EntryGroup: pure indicator proposal for %s (%s) suppressed — "
+                    "composite_score=%.2f < %.2f and max_quality=%.2f < %.2f.",
+                    symbol, direction.value,
+                    composite_score, CRITIC_SCORE_THRESHOLD,
+                    max_quality, SINGLE_SIGNAL_HIGH_CONFIDENCE,
+                )
+                return
+            logger.debug(
+                "EntryGroup: pure indicator proposal for %s (%s) allowed — "
+                "composite_score=%.2f max_quality=%.2f.",
+                symbol, direction.value, composite_score, max_quality,
+            )
 
         # ------------------------------------------------------------------
         # 7. Historian / Critic (Phase 3: skipped — agents not wired)

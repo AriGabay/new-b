@@ -404,6 +404,10 @@ class Position:
     packet_id:            str = ""   # links to setup_packets DB row
     panel_id:             str = ""   # links to panel_summaries DB row
     decision_id:          str = ""   # links to final_decisions DB row
+    state_snapshot_id:    str = ""   # links to mdp_transitions DB row (for reward backfill)
+    # Partial profit taking state
+    partial_exits:        list = field(default_factory=list)  # list of {price, fraction, pnl_usd}
+    remaining_fraction:   float = 1.0  # fraction of original position still open (1.0 = full)
 
 
 @dataclass

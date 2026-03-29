@@ -115,6 +115,7 @@ class SetupProposal:
     confirming_signals: list[str]
     conflicting_signals: list[str]
     primary_thesis: str        # one-sentence thesis
+    composite_score: float = 0.0  # from CandidateTradeProposal; drives R4 DEFER in MDP
 
 
 @dataclass
