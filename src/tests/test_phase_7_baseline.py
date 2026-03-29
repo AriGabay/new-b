@@ -196,6 +196,16 @@ class TestBaselineV3DoubleBottom:
         r = _get_baseline("btc_double_bottom_long_v1")
         assert r.position_opens >= 1, f"V3 must open position, got {r.position_opens}"
 
+    def test_v3_not_falsely_stopped_on_entry_bar(self):
+        """Phase 7.1 bug fix: V3 must NOT be stopped on bars_held=0."""
+        r = _get_baseline("btc_double_bottom_long_v1")
+        # V3 fixture has only 10 continuation bars; position stays open.
+        # Before the bug fix this was 1 close (false stop). Now it's 0.
+        assert r.position_closes == 0, (
+            f"V3 must not close within 10 continuation bars, got {r.position_closes} closes. "
+            "If close=1 with bars_held=0, the entry-bar wick bug has regressed."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Phase 6.2 V1 — known HOLD (13/20, below threshold)

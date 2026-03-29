@@ -83,9 +83,40 @@ class ExitGroup(BaseGroup):
         for position_id, position in open_positions.items():
             if position.symbol != features.symbol:
                 continue
+            if self._is_entry_bar(position, features):
+                # Entry bar: the position was opened at the close of this bar.
+                # The bar's low/high occurred BEFORE the entry, so checking them
+                # against stop/target would produce false stops.
+                #
+                # BUG FIX (Phase 7.1): all 42 historical bars_held=0 stop-loss
+                # exits were caused by this entry-bar wick check. The V3 fixture
+                # trade (double_bottom_long_v1) reached +1.655R MFE but was
+                # falsely stopped at -0.184R because the entry bar's wick
+                # (low=69289) was 12 points below the stop (69301).
+                position.bars_held += 1
+                continue
             exit_signal = self._evaluate_position(position, features)
             if exit_signal:
                 await self._execute_exit(position, exit_signal)
+
+    def _is_entry_bar(self, position: Position, features: FeatureVector) -> bool:
+        """
+        Returns True if this FeatureVector is the bar on which the position was
+        opened.  In the runtime path, the position opens at bar close during the
+        same FeatureReadyEvent cascade that ExitGroup later processes.  The bar's
+        low/high occurred before the entry, so exit checks are invalid.
+
+        Detection: bars_held == 0 AND the bar's close matches the entry price.
+        This is safe because:
+          - entry_price is always set from state.last_close_by_symbol (= bar close)
+          - bars_held == 0 means no exit check has run yet
+          - the close match ensures we only skip the EXACT entry bar, not a
+            subsequent bar that happens to also have bars_held == 0 (e.g. if a
+            position was opened via direct CandidateTradeEvent injection in tests)
+        """
+        if position.bars_held != 0:
+            return False
+        return float(position.entry_price) == float(features.close)
 
     def _evaluate_position(
         self,
@@ -100,6 +131,9 @@ class ExitGroup(BaseGroup):
         4. Time stop (bars_held >= 20)
 
         Before checking, update trailing stop if position is favorable.
+
+        Note: entry-bar skipping is handled by _check_exits (skip_ids).
+        This method is only called for bars AFTER the entry bar.
         """
         # Update trailing stop (ratchet only — never widens)
         new_trail = self._update_trailing_stop(position, features)
