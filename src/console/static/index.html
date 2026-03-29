@@ -1323,7 +1323,7 @@ async function loadPanelData() {
 
 function renderPanelSummary(panel) {
   const d = document.getElementById('panel-last-summary');
-  const decision = panel.decision || panel.final_decision || '—';
+  const decision = panel.panel_recommendation || panel.decision || panel.final_decision || '—';
   const badgeClass = decision === 'enter' ? 'badge-green' : 'badge-red';
   d.innerHTML = `
     <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -1365,7 +1365,7 @@ function renderTraderGrid(reviews) {
 
 function renderPanelHistory(panels) {
   document.getElementById('panel-history-rows').innerHTML = panels.map(p => {
-    const decision = p.decision || p.final_decision || '—';
+    const decision = p.panel_recommendation || p.decision || p.final_decision || '—';
     const badge = decision === 'enter' ? 'badge-green' : 'badge-red';
     return `<tr>
       <td class="blue">${(p.packet_id||'—').slice(0,12)}</td>
@@ -1697,7 +1697,7 @@ async function loadJournalPanels() {
       <div class="table-wrap"><table>
         <thead><tr><th>Packet ID</th><th>Symbol</th><th>Decision</th><th>Approvals</th><th>Avg Score</th><th>At</th></tr></thead>
         <tbody>${panels.map(p => {
-          const d = p.decision || p.final_decision || '—';
+          const d = p.panel_recommendation || p.decision || p.final_decision || '—';
           return `<tr>
             <td class="blue" onclick="loadPipelineDetail('${p.packet_id}')" style="cursor:pointer">${(p.packet_id||'').slice(0,14)}</td>
             <td>${p.symbol||'—'}</td>

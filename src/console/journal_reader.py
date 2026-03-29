@@ -175,8 +175,18 @@ class JournalReader:
         tables = self._tables()
         if "panel_summaries" not in tables:
             return []
+        # Join setup_packets for symbol; alias panel_recommendation → decision for UI
+        if "setup_packets" in tables:
+            return self._query(
+                "SELECT ps.*, ps.panel_recommendation AS decision, sp.symbol "
+                "FROM panel_summaries ps "
+                "LEFT JOIN setup_packets sp ON ps.packet_id = sp.packet_id "
+                "ORDER BY ps.evaluated_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
         return self._query(
-            "SELECT * FROM panel_summaries ORDER BY evaluated_at DESC LIMIT ? OFFSET ?",
+            "SELECT *, panel_recommendation AS decision "
+            "FROM panel_summaries ORDER BY evaluated_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
         )
 
