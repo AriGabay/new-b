@@ -1005,6 +1005,115 @@ let testPollTimer = null;
 let replayPollTimer = null;
 
 // ════════════════════════════════════════════════════════════
+// Israel Time Formatting (Asia/Jerusalem, dd/mm/yyyy, 24h)
+// ════════════════════════════════════════════════════════════
+const _IL_TZ = 'Asia/Jerusalem';
+const _ilDateFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: _IL_TZ, day: '2-digit', month: '2-digit', year: 'numeric'
+});
+const _ilTimeFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: _IL_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+});
+const _ilTimeShortFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: _IL_TZ, hour: '2-digit', minute: '2-digit', hour12: false
+});
+const _ilDateTimeFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: _IL_TZ, day: '2-digit', month: '2-digit', year: 'numeric',
+  hour: '2-digit', minute: '2-digit', hour12: false
+});
+const _ilDateTimeSecFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: _IL_TZ, day: '2-digit', month: '2-digit', year: 'numeric',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+});
+
+/** dd/mm/yyyy HH:mm — primary display format */
+function fmtIL(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    // Intl formats as "dd/mm/yyyy, HH:mm" — strip the comma
+    return _ilDateTimeFmt.format(d).replace(',', '');
+  } catch(e) { return '—'; }
+}
+
+/** dd/mm/yyyy HH:mm:ss */
+function fmtILSec(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return _ilDateTimeSecFmt.format(d).replace(',', '');
+  } catch(e) { return '—'; }
+}
+
+/** HH:mm:ss only */
+function fmtILTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return _ilTimeFmt.format(d);
+  } catch(e) { return '—'; }
+}
+
+/** dd/mm/yyyy only */
+function fmtILDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return _ilDateFmt.format(d);
+  } catch(e) { return '—'; }
+}
+
+/** Israel-time now as HH:mm:ss — for action output timestamps */
+function fmtILNow() {
+  return _ilTimeFmt.format(new Date());
+}
+
+/** Israel-time now as dd-mm-yyyy_HHmm — safe for filenames */
+function fmtILFileName() {
+  const d = new Date();
+  const parts = _ilDateTimeFmt.formatToParts(d);
+  const p = {};
+  parts.forEach(x => { if (x.type !== 'literal') p[x.type] = x.value; });
+  return `${p.day}-${p.month}-${p.year}_${p.hour}${p.minute}`;
+}
+
+// ════════════════════════════════════════════════════════════
+// Debounced refresh & active-section tracking
+// ════════════════════════════════════════════════════════════
+const _debounceTimers = {};
+const _dirtyFlags = {};
+
+function debouncedRefresh(key, fn, delayMs) {
+  if (_debounceTimers[key]) clearTimeout(_debounceTimers[key]);
+  _debounceTimers[key] = setTimeout(() => {
+    _debounceTimers[key] = null;
+    fn();
+  }, delayMs);
+}
+
+function activeSection() {
+  const el = document.querySelector('.section.active');
+  if (!el) return '';
+  return (el.id || '').replace('section-', '');
+}
+
+function markDirty(...sections) {
+  sections.forEach(s => { _dirtyFlags[s] = true; });
+}
+
+function consumeDirty(section) {
+  if (_dirtyFlags[section]) {
+    _dirtyFlags[section] = false;
+    return true;
+  }
+  return false;
+}
+
+// ════════════════════════════════════════════════════════════
 // Navigation
 // ════════════════════════════════════════════════════════════
 function showSection(name) {
@@ -1013,14 +1122,14 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   document.getElementById('nav-' + name).classList.add('active');
 
-  // Lazy-load data for sections
+  // Lazy-load data for sections (always load on first visit or if dirty)
   if (name === 'overview') refreshAll();
   if (name === 'groups') loadGroups();
-  if (name === 'panel') loadPanelData();
+  if (name === 'panel') { consumeDirty('panel'); loadPanelData(); }
   if (name === 'replay') loadReplayFixtures();
   if (name === 'tests') loadTestFiles();
-  if (name === 'journal') refreshJournal();
-  if (name === 'pipeline') loadPipelineList();
+  if (name === 'journal') { consumeDirty('journal'); refreshJournal(); }
+  if (name === 'pipeline') { consumeDirty('pipeline'); loadPipelineList(); }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1043,7 +1152,7 @@ function connectWS() {
       allEvents.push(event);
       if (allEvents.length > 2000) allEvents.shift();
       if (!eventsPaused) appendEventToStream(event);
-      updateHeaderFromEvent(event);
+      routeEventToUI(event);
     } catch(e) {}
   };
 
@@ -1058,10 +1167,90 @@ function connectWS() {
   };
 }
 
-function updateHeaderFromEvent(ev) {
-  if (ev.event_type === 'PositionOpenEvent' || ev.event_type === 'PositionCloseEvent') {
-    setTimeout(fetchState, 500);
+/**
+ * Route incoming WebSocket events to targeted UI updates.
+ * Each event type triggers ONLY the relevant section refreshes.
+ * Debouncing prevents DB hammering during fast event bursts (e.g. replay).
+ */
+function routeEventToUI(ev) {
+  const t = ev.event_type;
+  const sec = activeSection();
+
+  if (t === 'FeatureReadyEvent') {
+    // New bar processed → runner status (bars_processed) changed
+    debouncedRefresh('status', fetchStatus, 2000);
   }
+
+  if (t === 'CandidateTradeEvent') {
+    // EntryGroup fired a proposal → panel decision will be written ~immediately
+    // Refresh panel and pipeline after a delay to let PanelDecisionGroup finish
+    if (sec === 'panel') {
+      debouncedRefresh('panel', loadPanelData, 1500);
+    } else {
+      markDirty('panel');
+    }
+    if (sec === 'pipeline') {
+      debouncedRefresh('pipeline', loadPipelineList, 1500);
+    } else {
+      markDirty('pipeline');
+    }
+    debouncedRefresh('stats', fetchJournalStats, 2000);
+  }
+
+  if (t === 'PanelApprovedProposalEvent') {
+    // Panel approved → panel summaries, final decisions, journal stats changed
+    debouncedRefresh('stats', fetchJournalStats, 1000);
+    if (sec === 'panel') {
+      debouncedRefresh('panel', loadPanelData, 500);
+    } else {
+      markDirty('panel');
+    }
+    if (sec === 'pipeline') {
+      debouncedRefresh('pipeline', loadPipelineList, 1000);
+    } else {
+      markDirty('pipeline');
+    }
+  }
+
+  if (t === 'PositionOpenEvent') {
+    // Position opened → state, stats, journal trades all changed
+    debouncedRefresh('state', fetchState, 500);
+    debouncedRefresh('stats', fetchJournalStats, 1000);
+    if (sec === 'journal') {
+      debouncedRefresh('journal', () => loadJournalTab(_activeJournalTab()), 1000);
+    } else {
+      markDirty('journal');
+    }
+  }
+
+  if (t === 'PositionCloseEvent') {
+    // Position closed → state, stats, journal trades all changed
+    debouncedRefresh('state', fetchState, 500);
+    debouncedRefresh('stats', fetchJournalStats, 1000);
+    if (sec === 'journal') {
+      debouncedRefresh('journal', () => loadJournalTab(_activeJournalTab()), 1000);
+    } else {
+      markDirty('journal');
+    }
+  }
+
+  if (t === 'JournalEntryEvent') {
+    // Generic journal write → stats may have changed
+    debouncedRefresh('stats', fetchJournalStats, 3000);
+    markDirty('journal');
+  }
+
+  if (t === 'RiskDecisionEvent') {
+    // Risk decision made — state may have changed (halted, size_reduction)
+    debouncedRefresh('state', fetchState, 1000);
+  }
+}
+
+/** Get the currently active journal sub-tab name */
+function _activeJournalTab() {
+  const active = document.querySelector('.tab-pane.active');
+  if (!active) return 'trades';
+  return (active.id || '').replace('jtab-', '') || 'trades';
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1133,7 +1322,7 @@ function appendEventToStream(ev) {
   const stream = document.getElementById('log-stream');
   const div = document.createElement('div');
   div.className = 'event-line';
-  const ts = (ev.timestamp || ev.ts || '').slice(11, 19) || '—';
+  const ts = fmtILTime(ev.timestamp || ev.ts) || '—';
   div.innerHTML = `
     <span class="event-ts">${ts}</span>
     <span class="event-type-badge"><span class="badge ${eventBadgeClass(type)}">${type.replace('Event','')}</span></span>
@@ -1196,7 +1385,7 @@ async function fetchStatus() {
     dot.className = 'status-dot ' + (running ? 'dot-green' : 'dot-gray');
 
     document.getElementById('ov-mode').textContent = mode;
-    document.getElementById('ov-started').textContent = runner.started_at || '—';
+    document.getElementById('ov-started').textContent = fmtIL(runner.started_at);
 
     if (runner.error) {
       document.getElementById('ov-mode').style.color = 'var(--red)';
@@ -1336,7 +1525,7 @@ function renderPanelSummary(panel) {
       <div><span class="label" style="color:var(--text3);font-size:11px">Packet ID</span><br>
         <span style="font-family:var(--font);font-size:11px;color:var(--text3)">${(panel.packet_id||'—').slice(0,16)}</span></div>
       <div><span class="label" style="color:var(--text3);font-size:11px">At</span><br>
-        <span style="font-size:12px">${(panel.evaluated_at||'—').slice(0,19)}</span></div>
+        <span style="font-size:12px">${fmtIL(panel.evaluated_at)}</span></div>
     </div>`;
 }
 
@@ -1373,7 +1562,7 @@ function renderPanelHistory(panels) {
       <td><span class="badge ${badge}">${decision}</span></td>
       <td>${p.approve_count||0}/20</td>
       <td>${fmt(p.avg_score)}</td>
-      <td class="muted">${(p.evaluated_at||'—').slice(0,19)}</td>
+      <td class="muted">${fmtIL(p.evaluated_at)}</td>
     </tr>`;
   }).join('');
 }
@@ -1393,7 +1582,7 @@ async function loadPipelineList() {
     document.getElementById('pipe-list').innerHTML = packets.map(p => `
       <div onclick="loadPipelineDetail('${p.packet_id}')" style="padding:8px;border-bottom:1px solid var(--border2);cursor:pointer;font-size:12px" class="pipe-item">
         <div style="font-family:var(--font);color:var(--blue-light)">${(p.packet_id||'').slice(0,14)}…</div>
-        <div style="color:var(--text3)">${p.symbol||''} ${p.timeframe||''} | ${(p.bar_timestamp||'').slice(0,16)}</div>
+        <div style="color:var(--text3)">${p.symbol||''} ${p.timeframe||''} | ${fmtIL(p.bar_timestamp)}</div>
         <div><span class="badge badge-gray" style="font-size:10px">${p.outcome_source||''}</span> ${p.trade_id ? '<span class="badge badge-green">traded</span>':''}</div>
       </div>`).join('');
   } catch(e) {}
@@ -1437,7 +1626,7 @@ async function loadPipelineDetail(packetId) {
         <table style="font-size:12px">
           <tr><td class="muted" style="padding:2px 8px">Symbol</td><td>${packet.symbol||'—'}</td></tr>
           <tr><td class="muted" style="padding:2px 8px">Timeframe</td><td>${packet.timeframe||'—'}</td></tr>
-          <tr><td class="muted" style="padding:2px 8px">Bar Time</td><td>${packet.bar_timestamp||'—'}</td></tr>
+          <tr><td class="muted" style="padding:2px 8px">Bar Time</td><td>${fmtIL(packet.bar_timestamp)}</td></tr>
           <tr><td class="muted" style="padding:2px 8px">Source</td><td><span class="badge badge-blue">${packet.outcome_source||'—'}</span></td></tr>
           <tr><td class="muted" style="padding:2px 8px">Trade ID</td><td class="blue">${packet.trade_id||'—'}</td></tr>
         </table>
@@ -1636,8 +1825,8 @@ async function loadJournalTrades() {
             <td>${fmt(t.composite_score)}</td>
             <td><span class="badge ${badge}">${outcome}</span></td>
             <td class="${t.pnl_r>0?'green':t.pnl_r<0?'red':''}">${t.pnl_r!==null?fmt(t.pnl_r)+'R':'—'}</td>
-            <td class="muted">${(t.opened_at||'—').slice(0,16)}</td>
-            <td class="muted">${(t.closed_at||'—').slice(0,16)}</td>
+            <td class="muted">${fmtIL(t.opened_at)}</td>
+            <td class="muted">${fmtIL(t.closed_at)}</td>
           </tr>`;
         }).join('');
   } catch(e) {
@@ -1659,7 +1848,7 @@ async function loadJournalSignals() {
           <td><span class="badge ${s.direction==='SHORT'?'badge-red':'badge-green'}">${s.direction||'?'}</span></td>
           <td>${fmt(s.quality_score)}</td>
           <td class="muted">${(s.hypothesis_ref||'—').slice(0,20)}</td>
-          <td class="muted">${(s.timestamp||'—').slice(0,16)}</td>
+          <td class="muted">${fmtIL(s.timestamp)}</td>
         </tr>`).join('');
   } catch(e) {}
 }
@@ -1678,7 +1867,7 @@ async function loadJournalEvents() {
             <td class="blue">${e.event_type||'—'}</td>
             <td class="muted">${e.source||'—'}</td>
             <td>${sev ? `<span class="badge ${badge}">${sev}</span>` : '—'}</td>
-            <td class="muted">${(e.timestamp||'—').slice(0,16)}</td>
+            <td class="muted">${fmtIL(e.timestamp)}</td>
             <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;font-size:11px">${escHtml(payloadStr)}</td>
           </tr>`;
         }).join('');
@@ -1704,7 +1893,7 @@ async function loadJournalPanels() {
             <td><span class="badge ${d==='enter'?'badge-green':'badge-red'}">${d}</span></td>
             <td>${p.approve_count||0}/20</td>
             <td>${fmt(p.avg_score)}</td>
-            <td class="muted">${(p.evaluated_at||'—').slice(0,16)}</td>
+            <td class="muted">${fmtIL(p.evaluated_at)}</td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>`;
@@ -1736,7 +1925,7 @@ async function loadJournalPackets() {
           <td>${p.symbol||'—'}</td>
           <td>${p.timeframe||'—'}</td>
           <td><span class="badge badge-gray" style="font-size:10px">${(p.outcome_source||'—').slice(0,30)}</span></td>
-          <td class="muted">${(p.bar_timestamp||'—').slice(0,16)}</td>
+          <td class="muted">${fmtIL(p.bar_timestamp)}</td>
           <td class="blue">${(p.trade_id||'—').slice(0,12)}</td>
           <td><button class="btn btn-sm" onclick="inspectPacket('${p.packet_id}')">Inspect</button></td>
         </tr>`).join('');
@@ -1811,14 +2000,14 @@ function exportLogs() {
   const blob = new Blob([lines], {type: 'text/plain'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `console_logs_${new Date().toISOString().slice(0,19)}.txt`;
+  a.download = `console_logs_${fmtILFileName()}.txt`;
   a.click();
   setActionOutput('✓ Logs exported.');
 }
 
 function setActionOutput(msg) {
   const el = document.getElementById('action-output');
-  if (el) el.textContent = `[${new Date().toISOString().slice(11,19)}] ${msg}`;
+  if (el) el.textContent = `[${fmtILNow()}] ${msg}`;
 }
 
 // ════════════════════════════════════════════════════════════
