@@ -1,0 +1,65 @@
+================================================================
+  V6.1 BACKTEST REPORT — 3-Symbol Full Pipeline
+  Date        : 2026-03-31
+  Symbols     : BTCUSDT, ETHUSDT, BNBUSDT
+  Data        : BTCUSDT/ETHUSDT/BNBUSDT 1h, 54,267 bars processed
+  Equity      : $1,000
+  Run time    : 213.4s
+  Changes vs V5: Exit trail (11A) + thresholds bull=14/ranging=15 (11B/11E)
+                 + multi-symbol infrastructure (11C) + ETH/BNB data (11E)
+================================================================
+
+1. COMBINED PERFORMANCE
+────────────────────────────────────────────────────────────────
+  Total trades  : 138
+  Trades/week   : 1.27
+  Win rate      : 50.0%
+  Profit Factor : 0.90
+  Avg Winner    : $26.42
+  Avg Loser     : $29.43
+  AvgW/AvgL     : 0.898
+  Max Drawdown  : 38.0%
+  Net PnL       : $-207.96  on $1,000 equity
+  Final equity  : $792.04
+
+2. PER-SYMBOL BREAKDOWN
+────────────────────────────────────────────────────────────────
+  BTCUSDT   : 108 trades | WR 53.7% | PF 1.21 | AvgW $26.57 / AvgL $25.40 | Net $+271.35
+  ETHUSDT   :  30 trades | WR 36.7% | PF 0.37 | AvgW $25.59 / AvgL $40.04 | Net $-479.31
+  BNBUSDT   : 0 trades (no signals passed all gates)
+
+3. VS BASELINES
+────────────────────────────────────────────────────────────────
+  Metric               V5 (BTC T=15)      V6.0 (BTC T=12)    V6.1 (3-sym T=14/15)
+  ────────────────────────────────────────────────────────────
+  Trades/week          0.50               1.52               1.27                
+  Win rate             60.3%              46.1%              50.0%               
+  Profit Factor        1.21               0.86               0.90                
+  AvgW/AvgL            0.84               1.01               0.898               
+  Net PnL ($1K)        $95                N/A ($10K base)      $-207.96
+
+4. VERDICT
+────────────────────────────────────────────────────────────────
+  FAIL  (1/4 pass criteria met)
+
+    Trades/week >= 1.0                       PASS ✓
+    Profit Factor >= 1.3                     FAIL ✗
+    AvgW/AvgL >= 1.1                         FAIL ✗
+    Net PnL > $150                           FAIL ✗
+
+  FAILED CRITERIA:
+    ✗ Profit Factor >= 1.3
+    ✗ AvgW/AvgL >= 1.1
+    ✗ Net PnL > $150
+
+5. ANALYSIS
+────────────────────────────────────────────────────────────────
+  Exit trail fix (11A): AvgW/AvgL should be near or above 1.0.
+  Threshold regime (11E): bull=14, ranging/bear=15.
+    T=14 (bull/trending) — slightly more permissive than T=15,
+    gives small frequency gain in trending markets.
+    T=15 (ranging/bear)  — proven profitable threshold from V5 sweep.
+  Multi-symbol (11C): 3×BTC bars processed sequentially then ETH then
+    BNB through the same $1K account. Trade count is additive across
+    symbols; trades/week = total / 108.9 weeks of data.
+================================================================

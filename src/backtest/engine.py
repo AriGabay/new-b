@@ -407,6 +407,7 @@ class BacktestEngine:
                     "exit_reason": getattr(sig.exit_reason, "value", str(sig.exit_reason)),
                     "bars_held":  sig.bars_held,
                     "direction":  getattr(pos.direction, "value", str(pos.direction)),
+                    "symbol":     getattr(pos, "symbol", "unknown"),
                 })
                 if runner_ref[0] is not None:
                     dd = runner_ref[0]._state.portfolio.drawdown_pct
