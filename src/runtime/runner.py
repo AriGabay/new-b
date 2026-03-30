@@ -48,7 +48,8 @@ logger = logging.getLogger(__name__)
 
 BTC_SYMBOL = "BTCUSDT"
 ETH_SYMBOL = "ETHUSDT"
-TRADING_SYMBOLS = [BTC_SYMBOL, ETH_SYMBOL]   # all symbols processed by this runner
+BNB_SYMBOL = "BNBUSDT"
+TRADING_SYMBOLS = [BTC_SYMBOL, ETH_SYMBOL, BNB_SYMBOL]   # all symbols processed by this runner
 DEFAULT_INTERVAL = "60"   # 1h bars
 POLL_INTERVAL_SECONDS = 60
 

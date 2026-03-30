@@ -30,8 +30,7 @@ from core.schemas import ModeGate
 @dataclass
 class MarketDataConfig:
     symbols:          list[str] = field(default_factory=lambda: [
-        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT",
-        "ADAUSDT", "UNIUSDT", "AAVEUSDT",
+        "BTCUSDT", "ETHUSDT", "BNBUSDT",
     ])
     timeframe:        str     = "1d"
     poll_interval_s:  int     = 3600    # Check for new bars every hour

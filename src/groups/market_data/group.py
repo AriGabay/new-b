@@ -42,7 +42,8 @@ BAR_HISTORY_SIZE = 250
 # Trading symbols supported by this group
 BTC_SYMBOL = "BTCUSDT"
 ETH_SYMBOL = "ETHUSDT"
-ELIGIBLE_SYMBOLS = {BTC_SYMBOL, ETH_SYMBOL}
+BNB_SYMBOL = "BNBUSDT"
+ELIGIBLE_SYMBOLS = {BTC_SYMBOL, ETH_SYMBOL, BNB_SYMBOL}
 # Bybit interval string -> our timeframe label
 INTERVAL_TO_TF: dict[str, str] = {
     "60":  "1h",
