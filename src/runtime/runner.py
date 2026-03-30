@@ -47,6 +47,8 @@ from core.state import SystemState
 logger = logging.getLogger(__name__)
 
 BTC_SYMBOL = "BTCUSDT"
+ETH_SYMBOL = "ETHUSDT"
+TRADING_SYMBOLS = [BTC_SYMBOL, ETH_SYMBOL]   # all symbols processed by this runner
 DEFAULT_INTERVAL = "60"   # 1h bars
 POLL_INTERVAL_SECONDS = 60
 
@@ -125,8 +127,8 @@ class BtcBybitPaperRunner:
                 logger.error("Runner: group %s setup failed: %s", type(group).__name__, exc)
                 raise
 
-        # 5. Mark BTC as eligible
-        await self._state.update_universe({BTC_SYMBOL})
+        # 5. Mark all trading symbols as eligible
+        await self._state.update_universe(set(TRADING_SYMBOLS))
 
         # 6. Wire learning layer now that PerformanceJournalGroup._initialize_db()
         #    has been called (during step 4). JournalExtension and DecisionTraceLogger
@@ -316,10 +318,11 @@ class BtcBybitPaperRunner:
         if self._simulation_mode:
             logger.info("Runner: simulation mode — skipping Bybit startup_load.")
             return
-        try:
-            await self._market_data.startup_load(BTC_SYMBOL)
-        except Exception as exc:
-            logger.error("Runner: startup_load failed: %s", exc)
+        for sym in TRADING_SYMBOLS:
+            try:
+                await self._market_data.startup_load(sym)
+            except Exception as exc:
+                logger.error("Runner: startup_load failed for %s: %s", sym, exc)
 
     async def run_one_bar(self, interval: str = DEFAULT_INTERVAL) -> bool:
         """
@@ -330,12 +333,15 @@ class BtcBybitPaperRunner:
         """
         if self._simulation_mode:
             raise RuntimeError("Use simulate_bar() in simulation mode.")
-        try:
-            fv = await self._market_data.fetch_and_process(BTC_SYMBOL, interval)
-            return fv is not None
-        except Exception as exc:
-            logger.error("Runner: run_one_bar failed: %s", exc)
-            return False
+        got_new = False
+        for sym in TRADING_SYMBOLS:
+            try:
+                fv = await self._market_data.fetch_and_process(sym, interval)
+                if fv is not None:
+                    got_new = True
+            except Exception as exc:
+                logger.error("Runner: run_one_bar failed for %s: %s", sym, exc)
+        return got_new
 
     async def simulate_bar(self, fv: FeatureVector) -> None:
         """

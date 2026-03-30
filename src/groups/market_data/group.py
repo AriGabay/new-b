@@ -39,8 +39,10 @@ logger = logging.getLogger(__name__)
 
 # Rolling window size per timeframe
 BAR_HISTORY_SIZE = 250
-# BTC is always the only symbol in phase 1
+# Trading symbols supported by this group
 BTC_SYMBOL = "BTCUSDT"
+ETH_SYMBOL = "ETHUSDT"
+ELIGIBLE_SYMBOLS = {BTC_SYMBOL, ETH_SYMBOL}
 # Bybit interval string -> our timeframe label
 INTERVAL_TO_TF: dict[str, str] = {
     "60":  "1h",
@@ -76,8 +78,8 @@ class MarketDataGroup(BaseGroup):
         self._last_bar_ts: dict[tuple[str, str], Optional[datetime]] = {}
         self._feature_cache: dict[tuple[str, str], Optional[FeatureVector]] = {}
 
-        # BTC is eligible immediately
-        self._eligible_symbols: set[str] = {BTC_SYMBOL}
+        # All trading symbols are eligible immediately
+        self._eligible_symbols: set[str] = set(ELIGIBLE_SYMBOLS)
 
     async def _setup(self) -> None:
         """
@@ -85,8 +87,8 @@ class MarketDataGroup(BaseGroup):
         Polling is driven externally; no EventBus subscriptions needed.
         """
         await self._adapter.setup()
-        await self.state.update_universe({BTC_SYMBOL})
-        logger.info("MarketDataGroup ready. BTC/Bybit adapter initialized.")
+        await self.state.update_universe(set(ELIGIBLE_SYMBOLS))
+        logger.info("MarketDataGroup ready. Eligible symbols: %s", sorted(ELIGIBLE_SYMBOLS))
 
     async def _teardown(self) -> None:
         await self._adapter.teardown()
@@ -152,7 +154,7 @@ class MarketDataGroup(BaseGroup):
                     "startup_load: error fetching %s/%s: %s", symbol, tf_label, exc
                 )
 
-        await self.state.update_universe({BTC_SYMBOL})
+        await self.state.update_universe(set(ELIGIBLE_SYMBOLS))
 
         # Publish FeatureReadyEvent for 1h timeframe so all groups can
         # process the current market state immediately at startup.

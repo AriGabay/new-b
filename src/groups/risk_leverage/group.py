@@ -181,6 +181,12 @@ class RiskLeverageGroup(BaseGroup):
         state_snapshot_id links to mdp_transitions for reward backfill.
         size_multiplier (0.5/1.0/1.5) scales position size per MDP action.
         """
+        # Rule 0: Per-symbol position limit — max 1 open position per symbol
+        result = self._check_symbol_position_limit(proposal)
+        if not result.approved:
+            await self._reject(proposal, result)
+            return
+
         # Rule 1: Mode gate
         result = self._check_mode_gate(proposal)
         if not result.approved:
@@ -243,6 +249,20 @@ class RiskLeverageGroup(BaseGroup):
     # ------------------------------------------------------------------
     # Rule implementations (deterministic — no LLM, no external calls)
     # ------------------------------------------------------------------
+
+    def _check_symbol_position_limit(self, proposal: CandidateTradeProposal) -> RiskCheckResult:
+        """Rule 0: Max 1 open position per symbol — prevents duplicate entries on same symbol."""
+        symbol = proposal.symbol
+        existing = [
+            p for p in self.state.portfolio.open_positions.values()
+            if p.symbol == symbol
+        ]
+        if existing:
+            return RiskCheckResult.rejected(
+                RejectionCode.PORTFOLIO_EXPOSURE,
+                f"Already have {len(existing)} open position(s) for {symbol} — max 1 per symbol.",
+            )
+        return RiskCheckResult.approved_ok()
 
     def _check_mode_gate(self, proposal: CandidateTradeProposal) -> RiskCheckResult:
         """Rule 1: Block execution in RESEARCH mode."""
