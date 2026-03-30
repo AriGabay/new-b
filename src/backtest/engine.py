@@ -352,6 +352,184 @@ class BacktestEngine:
             else:
                 return price * Decimal(str(1 + adj))
 
+    async def run_simple(self, bars: dict[str, list[OHLCVBar]]) -> BacktestResult:
+        """
+        Alias for run() — EMA-crossover-only benchmark strategy (H3-002).
+        Kept for comparison against run_full_pipeline().
+        """
+        return await self.run(bars)
+
+    async def run_full_pipeline(
+        self,
+        bars: dict[str, list[OHLCVBar]],
+        verbose: bool = False,
+    ) -> BacktestResult:
+        """
+        Full pipeline bar-by-bar backtest using BtcBybitPaperRunner in simulation mode.
+
+        Wires ALL production groups (market data, indicators, candlestick, chart patterns,
+        technical structure, entry, panel, risk, exit, historian) and replays bars using a
+        fixed 200-bar sliding window.  Trade metrics are collected via PositionCloseEvent
+        subscriptions — the identical code path as live trading.
+
+        Args:
+            bars:    Symbol → chronological list of OHLCVBar (oldest first).
+            verbose: Log progress every 500 processed bars.
+
+        Returns:
+            BacktestResult with per_hypothesis["_meta"] containing:
+              bars_processed, trade_records, avg_winner_usd, avg_loser_usd.
+        """
+        import os
+        import tempfile
+        from features.compute import FeatureComputer
+        from core.events import PositionCloseEvent
+        from runtime.runner import BtcBybitPaperRunner
+
+        result = BacktestResult(config=self.config)
+
+        # Use a temporary journal DB so we don't pollute live data.
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        trade_records: list[dict] = []
+        running_max_dd: float = 0.0
+        runner_ref: list = [None]   # mutable container for closure access
+
+        async def _on_close(event: PositionCloseEvent) -> None:
+            nonlocal running_max_dd
+            sig = event.exit_signal
+            pos = event.final_position
+            if sig is not None and pos is not None:
+                trade_records.append({
+                    "pnl_usd":    float(sig.pnl_usd),
+                    "pnl_r":      sig.pnl_r,
+                    "exit_reason": getattr(sig.exit_reason, "value", str(sig.exit_reason)),
+                    "bars_held":  sig.bars_held,
+                    "direction":  getattr(pos.direction, "value", str(pos.direction)),
+                })
+                if runner_ref[0] is not None:
+                    dd = runner_ref[0]._state.portfolio.drawdown_pct
+                    if dd > running_max_dd:
+                        running_max_dd = dd
+
+        bars_processed: int = 0
+
+        try:
+            runner = BtcBybitPaperRunner(
+                simulation_mode=True,
+                journal_db_path=db_path,
+            )
+            runner_ref[0] = runner
+
+            await runner.setup()
+
+            # Override equity to match backtest config (runner defaults to $100k)
+            init_eq = self.config.initial_equity
+            runner._state.portfolio.equity        = init_eq
+            runner._state.portfolio.available     = init_eq
+            runner._state.portfolio.high_water_mark = init_eq
+
+            # Subscribe to position-close events BEFORE processing bars
+            await runner._bus.subscribe(PositionCloseEvent, _on_close)
+
+            for symbol, bar_list in bars.items():
+                computer = FeatureComputer()
+                total_symbol_bars = len(bar_list)
+
+                for i, _bar in enumerate(bar_list):
+                    # Fixed 200-bar lookback window (avoids O(n²) growing-buffer cost)
+                    if i < 199:
+                        continue
+                    window = bar_list[i - 199: i + 1]   # exactly 200 bars
+
+                    fv = computer.compute(window)
+                    if fv is None:
+                        continue
+
+                    await runner.simulate_bar(fv)
+                    bars_processed += 1
+
+                    # Track max drawdown between trade events too
+                    dd = runner._state.portfolio.drawdown_pct
+                    if dd > running_max_dd:
+                        running_max_dd = dd
+
+                    if verbose and bars_processed % 500 == 0:
+                        port = runner._state.portfolio
+                        pct_done = (i + 1) / total_symbol_bars * 100
+                        logger.info(
+                            "  [%5.1f%%] bar %5d/%-5d | equity=$%8.0f | "
+                            "trades=%3d | DD=%.1f%%",
+                            pct_done, i + 1, total_symbol_bars,
+                            float(port.equity), len(trade_records),
+                            running_max_dd * 100,
+                        )
+
+            # ------------------------------------------------------------------
+            # Aggregate final metrics
+            # ------------------------------------------------------------------
+            portfolio = runner._state.portfolio
+            result.final_equity     = portfolio.equity
+            result.total_pnl_usd    = portfolio.equity - init_eq
+            result.max_drawdown_pct = running_max_dd
+
+            if trade_records:
+                winning = [t for t in trade_records if t["pnl_usd"] > 0]
+                losing  = [t for t in trade_records if t["pnl_usd"] <= 0]
+
+                result.total_trades   = len(trade_records)
+                result.winning_trades = len(winning)
+                result.losing_trades  = len(losing)
+                result.win_rate       = len(winning) / len(trade_records)
+
+                gross_wins   = sum(t["pnl_usd"] for t in winning)
+                gross_losses = abs(sum(t["pnl_usd"] for t in losing))
+                result.profit_factor  = (
+                    gross_wins / gross_losses if gross_losses > 0 else float(len(winning))
+                )
+                result.avg_r_multiple = (
+                    sum(t["pnl_r"] for t in trade_records) / len(trade_records)
+                )
+
+            n_win = max(1, sum(1 for t in trade_records if t["pnl_usd"] > 0))
+            n_los = max(1, sum(1 for t in trade_records if t["pnl_usd"] <= 0))
+            avg_winner = (
+                sum(t["pnl_usd"] for t in trade_records if t["pnl_usd"] > 0) / n_win
+            ) if trade_records else 0.0
+            avg_loser = (
+                sum(t["pnl_usd"] for t in trade_records if t["pnl_usd"] <= 0) / n_los
+            ) if trade_records else 0.0
+
+            result.per_hypothesis["_meta"] = {
+                "bars_processed":  bars_processed,
+                "trade_records":   trade_records,
+                "avg_winner_usd":  avg_winner,
+                "avg_loser_usd":   avg_loser,
+                "db_path":         db_path,
+            }
+
+        finally:
+            if runner_ref[0] is not None:
+                await runner_ref[0].teardown()
+            try:
+                os.unlink(db_path)
+            except OSError:
+                pass
+
+        logger.info(
+            "BacktestEngine.run_full_pipeline: %d bars processed, %d trades, "
+            "WR=%.1f%%, PF=%.2f, MaxDD=%.1f%%, PnL=$%.0f",
+            bars_processed,
+            result.total_trades,
+            result.win_rate * 100,
+            result.profit_factor,
+            result.max_drawdown_pct * 100,
+            float(result.total_pnl_usd),
+        )
+
+        return result
+
     async def _replay_bar(self, symbol: str, bar: OHLCVBar, bar_index: int) -> None:
         """
         Process one bar through the full pipeline.

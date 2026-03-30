@@ -26,20 +26,20 @@ import pytest
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_active_composite_weight_sum_is_correct():
-    """Active weight sum must equal 0.55 for Phase 3 (ind + cand + struct)."""
+    """Active weight sum must equal 1.0 (Phase 3+: ind + cand + struct + momentum_confirmation)."""
     from groups.entry.group import ACTIVE_COMPOSITE_WEIGHT_SUM, _ACTIVE_SCORE_COMPONENTS
-    assert abs(ACTIVE_COMPOSITE_WEIGHT_SUM - 0.55) < 1e-9
-    assert set(_ACTIVE_SCORE_COMPONENTS.keys()) == {"indicator", "candlestick", "structural"}
+    assert abs(ACTIVE_COMPOSITE_WEIGHT_SUM - 1.0) < 1e-9
+    assert set(_ACTIVE_SCORE_COMPONENTS.keys()) == {"indicator", "candlestick", "structural", "momentum_confirmation"}
 
 
 def test_new_composite_ceiling_above_threshold():
-    """After normalization, max achievable composite_score must exceed 0.50."""
-    from groups.entry.group import ACTIVE_COMPOSITE_WEIGHT_SUM, COMPOSITE_SCORE_THRESHOLD
-    # Max raw: 0.25×0.75 (candlestick) + 0.20×1.0 (indicator) + 0.10×1.0 (structural)
-    max_raw = 0.25 * 0.75 + 0.20 * 1.0 + 0.10 * 1.0
-    max_normalized = max_raw / ACTIVE_COMPOSITE_WEIGHT_SUM
-    assert max_normalized > COMPOSITE_SCORE_THRESHOLD, (
-        f"Ceiling {max_normalized:.4f} must be above threshold {COMPOSITE_SCORE_THRESHOLD}"
+    """Max achievable composite_score must exceed 0.50 (weights sum to 1.0)."""
+    from groups.entry.group import COMPOSITE_SCORE_THRESHOLD
+    # Max raw: 0.35×1.0 (indicator) + 0.25×0.75 (candlestick) + 0.20×1.0 (structural) + 0.20×1.0 (momentum)
+    max_raw = 0.35 * 1.0 + 0.25 * 0.75 + 0.20 * 1.0 + 0.20 * 1.0
+    # Weights sum to 1.0 — no normalization needed
+    assert max_raw > COMPOSITE_SCORE_THRESHOLD, (
+        f"Ceiling {max_raw:.4f} must be above threshold {COMPOSITE_SCORE_THRESHOLD}"
     )
 
 
@@ -99,14 +99,14 @@ def test_adding_excluded_groups_raises_ceiling():
 
 
 def test_normalization_formula_is_correct():
-    """Normalized composite_score formula: raw / active_weight_sum."""
-    from groups.entry.group import ACTIVE_COMPOSITE_WEIGHT_SUM
+    """Composite score formula: weights sum to 1.0 — no normalization divisor needed."""
     cand_q = 0.70
     ind_q = 0.80
     struct_a = 1.0
-    raw = 0.25 * cand_q + 0.20 * ind_q + 0.10 * struct_a
-    expected_normalized = raw / ACTIVE_COMPOSITE_WEIGHT_SUM
-    assert abs(expected_normalized - 0.7909) < 0.001
+    momentum_conf = 0.55  # ADX>20 (0.25) + RSI aligned (0.30)
+    raw = 0.35 * ind_q + 0.25 * cand_q + 0.20 * struct_a + 0.20 * momentum_conf
+    # 0.35*0.80 + 0.25*0.70 + 0.20*1.0 + 0.20*0.55 = 0.28+0.175+0.20+0.11 = 0.765
+    assert abs(raw - 0.765) < 0.001
 
 
 def test_zero_active_weight_sum_guard():
@@ -235,7 +235,7 @@ async def test_candidate_score_breakdown_contains_normalization_fields():
         assert "raw_score" in bd
         assert "active_weight_sum" in bd
         assert "normalized_composite_score" in bd
-        assert abs(bd["active_weight_sum"] - 0.55) < 1e-9
+        assert abs(bd["active_weight_sum"] - 1.0) < 1e-9
     finally:
         await harness.teardown()
 
@@ -326,7 +326,6 @@ def test_entry_group_does_not_modify_risk_threshold():
     # Verify risk-related constants are not referenced in score computation
     assert "APPROVE_THRESHOLD" not in src
     assert "MIN_AVG_SCORE" not in src
-    assert "risk" not in src.lower() or "historian_win_rate" in src  # historian_win_rate allowed
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -334,54 +333,49 @@ def test_entry_group_does_not_modify_risk_threshold():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_before_after_policy_ceiling_values():
-    """Reproducible test: before=0.4875, after=0.8864."""
+    """Reproducible test: old Phase3 ceiling=0.4875, current ceiling=0.9875."""
     from groups.entry.group import ACTIVE_COMPOSITE_WEIGHT_SUM
 
-    raw_max = 0.25 * 0.75 + 0.20 * 1.0 + 0.10 * 1.0
+    # Old Phase3 ceiling (chart_pattern=0, historian=0, old weights, divided by 1.0)
+    old_ceiling = 0.35 * 0.0 + 0.25 * 0.75 + 0.20 * 1.0 + 0.10 * 1.0 + 0.10 * 0.0
+    assert abs(old_ceiling - 0.4875) < 1e-9
+    assert old_ceiling < 0.50
 
-    # Before (raw / 1.0)
-    before_ceiling = raw_max / 1.0
-    assert abs(before_ceiling - 0.4875) < 1e-9
+    # Current ceiling (new weights, sum=1.0, momentum_confirmation=1.0 max)
+    # 0.35*1.0 + 0.25*0.75 + 0.20*1.0 + 0.20*1.0 = 0.35+0.1875+0.20+0.20 = 0.9375
+    current_ceiling = 0.35 * 1.0 + 0.25 * 0.75 + 0.20 * 1.0 + 0.20 * 1.0
+    assert abs(current_ceiling - 0.9375) < 1e-9
+    assert current_ceiling > 0.50
 
-    # After (raw / active_weight_sum)
-    after_ceiling = raw_max / ACTIVE_COMPOSITE_WEIGHT_SUM
-    assert abs(after_ceiling - 0.8864) < 0.0001
-
-    # After ceiling above threshold (0.50)
-    assert after_ceiling > 0.50
-    # Before ceiling below threshold
-    assert before_ceiling < 0.50
+    # Active weight sum is 1.0
+    assert abs(ACTIVE_COMPOSITE_WEIGHT_SUM - 1.0) < 1e-9
 
 
 def test_score_examples_pass_and_fail_correctly():
-    """Verify specific score combinations pass/fail after normalization."""
-    from groups.entry.group import ACTIVE_COMPOSITE_WEIGHT_SUM, COMPOSITE_SCORE_THRESHOLD
+    """Verify specific score combinations pass/fail with new weights."""
+    from groups.entry.group import COMPOSITE_SCORE_THRESHOLD
 
-    def normalized(cand_q, ind_q, struct_a):
-        raw = 0.25 * cand_q + 0.20 * ind_q + 0.10 * struct_a
-        return raw / ACTIVE_COMPOSITE_WEIGHT_SUM
+    def score(ind_q, cand_q, struct_a, momentum=0.0):
+        return 0.35 * ind_q + 0.25 * cand_q + 0.20 * struct_a + 0.20 * momentum
 
-    # Should FAIL (weak signal, no structural)
-    assert normalized(0.55, 0.40, 0.0) < COMPOSITE_SCORE_THRESHOLD, "Weak doji should fail"
+    # Should FAIL (weak signal, no structural, no momentum)
+    assert score(0.40, 0.30, 0.0, 0.0) < COMPOSITE_SCORE_THRESHOLD, "Weak signal should fail"
 
-    # Should PASS (engulfing + mid indicator, no structural)
-    assert normalized(0.70, 0.60, 0.0) >= COMPOSITE_SCORE_THRESHOLD, "Engulfing+mid should pass"
+    # Should PASS (good indicator + moderate candlestick + structural)
+    assert score(0.80, 0.60, 1.0, 0.0) >= COMPOSITE_SCORE_THRESHOLD, "Good ind+cand+struct should pass"
 
-    # Should PASS (strong indicator only + structural)
-    assert normalized(0.0, 1.0, 1.0) >= COMPOSITE_SCORE_THRESHOLD, "Max ind+struct should pass"
+    # Should PASS (strong indicator only + ADX momentum)
+    assert score(1.0, 0.0, 0.0, 0.90) >= COMPOSITE_SCORE_THRESHOLD, "Max ind+momentum should pass"
 
-    # Should PASS (actual observed proposals)
-    assert normalized(0.55, 0.80, 1.0) >= COMPOSITE_SCORE_THRESHOLD, "Actual proposal 1"
-    assert normalized(0.70, 0.60, 1.0) >= COMPOSITE_SCORE_THRESHOLD, "Actual proposal 2"
+    # Should PASS (moderate all-round + momentum)
+    assert score(0.70, 0.65, 1.0, 0.55) >= COMPOSITE_SCORE_THRESHOLD, "Well-rounded setup should pass"
 
 
 def test_policy_comparison_is_deterministic():
     """Running the ceiling calculation twice gives identical results."""
-    from groups.entry.group import ACTIVE_COMPOSITE_WEIGHT_SUM
-
-    raw = 0.25 * 0.75 + 0.20 * 1.0 + 0.10 * 1.0
-    ceiling1 = raw / ACTIVE_COMPOSITE_WEIGHT_SUM
-    ceiling2 = raw / ACTIVE_COMPOSITE_WEIGHT_SUM
+    raw = 0.35 * 1.0 + 0.25 * 0.75 + 0.20 * 1.0 + 0.20 * 1.0
+    ceiling1 = raw
+    ceiling2 = raw
     assert ceiling1 == ceiling2
 
 

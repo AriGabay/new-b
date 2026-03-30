@@ -32,16 +32,16 @@ Confirmation gate rules:
 
 Composite score formula:
   raw_score = (
-      0.35 × chart_pattern_quality (0.0 if excluded — Phase 3)
-    + 0.25 × candlestick_quality   (0.0 if no pattern detected)
-    + 0.20 × indicator_quality     (0.0 if no indicator signal)
-    + 0.10 × structural_alignment  (1.0 = at S/R, 0.0 = no S/R)
-    + 0.10 × historian_win_rate    (0.0 if excluded — Phase 3)
+      0.35 × indicator_quality       (avg quality of indicator signals)
+    + 0.25 × candlestick_quality     (avg quality of candlestick signals)
+    + 0.20 × structural_alignment    (1.0 = at S/R, 0.0 = no S/R)
+    + 0.20 × momentum_confirmation   (computed from ADX + RSI direction + volume)
   )
-  composite_score = raw_score / ACTIVE_COMPOSITE_WEIGHT_SUM
-    where ACTIVE_COMPOSITE_WEIGHT_SUM = sum of weights for ACTIVE groups only.
-    Phase 3: 0.25 + 0.20 + 0.10 = 0.55 → ceiling = 0.4875 / 0.55 = 0.8864.
-    Phase 4+: all groups active → ACTIVE_COMPOSITE_WEIGHT_SUM = 1.00 (identity).
+  Weights sum to 1.0 — no normalization divisor needed.
+  momentum_confirmation sub-score (capped at 1.0):
+    RSI direction aligned    +0.30
+    ADX > 20                 +0.25  (+ 0.15 more if ADX > 30 = total 0.40)
+    volume > 1.2×            +0.20  (+ 0.10 more if volume > 2× = total 0.30)
   Threshold to pass confirmation gate: composite_score >= 0.50.
   Threshold to invoke CriticAgent: composite_score >= 0.60.
 
@@ -104,19 +104,24 @@ SINGLE_SIGNAL_HIGH_CONFIDENCE = 0.80  # bypass min-groups gate if quality_score 
 # ---------------------------------------------------------------------------
 
 _ACTIVE_SCORE_COMPONENTS: dict = {
-    # name              weight   active since
-    "indicator":        0.20,   # Phase 3
-    "candlestick":      0.25,   # Phase 3
-    "structural":       0.10,   # Phase 3
-    # "chart_pattern":  0.35,   # Excluded: ChartPatternGroup does NOT publish GroupSignalEvent.
-    #                            # Chart pattern data reaches PanelDecisionGroup exclusively
-    #                            # via _signals_cache cache wiring (runner._wire_caches).
-    #                            # Intentionally kept out of EntryGroup scoring to preserve
-    #                            # existing regression fixtures. See ChartPatternGroup NOTE.
-    # "historian":      0.10,   # Phase 4+ (HistorianAgent not yet wired)
+    # name                       weight   notes
+    "indicator":                 0.35,   # Phase 3 — raised from 0.20
+    "candlestick":               0.25,   # Phase 3
+    "structural":                0.20,   # Phase 3 — raised from 0.10
+    "momentum_confirmation":     0.20,   # Phase 3 — new component (ADX + RSI + volume)
 }
 
-ACTIVE_COMPOSITE_WEIGHT_SUM: float = sum(_ACTIVE_SCORE_COMPONENTS.values())  # 0.55 in Phase 3
+# 5-component weights used when HistorianGroup is wired (Phase 4+)
+_HISTORIAN_SCORE_COMPONENTS: dict = {
+    "indicator":                 0.30,
+    "candlestick":               0.22,
+    "structural":                0.18,
+    "momentum_confirmation":     0.16,
+    "historian":                 0.14,
+}
+
+# Weights sum to 1.0 — no normalization divisor needed.
+ACTIVE_COMPOSITE_WEIGHT_SUM: float = sum(_ACTIVE_SCORE_COMPONENTS.values())  # 1.00
 
 
 class EntryGroup(BaseGroup):
@@ -200,9 +205,12 @@ class EntryGroup(BaseGroup):
         4. Compute composite score.
         5. Invoke HistorianAgent (Phase 3: skipped — returns 0.0 win_rate).
         6. Invoke CriticAgent if score >= CRITIC_SCORE_THRESHOLD (Phase 3: skipped).
-        7. Build CandidateTradeProposal.
-        8. Publish CandidateTradeEvent.
-        9. Clear pending bundles for this symbol.
+        6. Query HistorianGroup (before composite score so it feeds into it).
+        7. Compute composite score (4-component or 5-component with historian).
+        8. Invoke CriticAgent if score >= CRITIC_SCORE_THRESHOLD.
+        9. Build CandidateTradeProposal.
+        10. Publish CandidateTradeEvent.
+        11. Clear pending bundles for this symbol.
         """
         bundles = self._pending_bundles.get(symbol, {})
         if not bundles:
@@ -314,13 +322,39 @@ class EntryGroup(BaseGroup):
             return
 
         # ------------------------------------------------------------------
-        # 6. Composite score computation (now includes candlestick_quality > 0)
+        # 6. Historian query (before composite score so result feeds into it)
+        # ------------------------------------------------------------------
+        historian_analog: Optional[HistoricalAnalog] = None
+
+        if self._historian is not None:
+            try:
+                # Build regime_key from regime context
+                regime_key = (
+                    f"{regime.btc_macro}_{regime.volatility_regime}"
+                    if regime is not None else None
+                )
+                hypothesis_refs = list(
+                    {getattr(s, "hypothesis_ref", None) for s in primary_signals
+                     if getattr(s, "hypothesis_ref", None)}
+                )
+                historian_analog = self._historian.query(
+                    symbol, direction,
+                    hypothesis_refs=hypothesis_refs,
+                    regime_key=regime_key,
+                )
+            except Exception as exc:
+                logger.warning("EntryGroup: historian query failed: %s", exc)
+
+        # ------------------------------------------------------------------
+        # 7. Composite score computation
         # ------------------------------------------------------------------
         composite_score, score_breakdown = self._compute_composite_score(
             bundles=bundles,
             primary_signals=primary_signals,
             structural_bundle=structural_bundle,
-            historian_analog=None,  # Phase 3: no historian
+            historian_analog=historian_analog,
+            regime=regime,
+            direction=direction,
         )
 
         if composite_score < COMPOSITE_SCORE_THRESHOLD:
@@ -331,7 +365,7 @@ class EntryGroup(BaseGroup):
             return
 
         # ------------------------------------------------------------------
-        # 6b. Deferred bar-level gate: pure indicator proposals need either
+        # 7b. Deferred bar-level gate: pure indicator proposals need either
         #     composite_score >= CRITIC_SCORE_THRESHOLD (0.60) or at least
         #     one signal with quality_score >= SINGLE_SIGNAL_HIGH_CONFIDENCE (0.80).
         # ------------------------------------------------------------------
@@ -356,16 +390,9 @@ class EntryGroup(BaseGroup):
             )
 
         # ------------------------------------------------------------------
-        # 7. Historian / Critic (Phase 3: skipped — agents not wired)
+        # 8. Critic (optional LLM call)
         # ------------------------------------------------------------------
-        historian_analog: Optional[HistoricalAnalog] = None
         critic_report: Optional[CriticReport] = None
-
-        if self._historian is not None:
-            try:
-                historian_analog = await self._historian.query(symbol, direction)
-            except Exception as exc:
-                logger.warning("EntryGroup: historian query failed: %s", exc)
 
         if self._critic is not None and composite_score >= CRITIC_SCORE_THRESHOLD:
             try:
@@ -374,7 +401,7 @@ class EntryGroup(BaseGroup):
                 logger.warning("EntryGroup: critic evaluation failed: %s", exc)
 
         # ------------------------------------------------------------------
-        # 8. Build and publish CandidateTradeProposal
+        # 9. Build and publish CandidateTradeProposal
         # ------------------------------------------------------------------
         proposal = self._build_proposal(
             symbol=symbol,
@@ -404,16 +431,17 @@ class EntryGroup(BaseGroup):
         primary_signals: list,
         structural_bundle,
         historian_analog: Optional[HistoricalAnalog],
+        regime: Optional[RegimeContext] = None,
+        direction: Optional[Direction] = None,
     ) -> tuple[float, dict]:
         """
         Returns (composite_score, score_breakdown).
 
-        Weights per spec:
-          chart_pattern_quality : 0.35
-          candlestick_quality   : 0.25
-          indicator_quality     : 0.20
-          structural_alignment  : 0.10
-          historian_win_rate    : 0.10
+        Weights (all active, sum = 1.0):
+          indicator_quality       : 0.35
+          candlestick_quality     : 0.25
+          structural_alignment    : 0.20
+          momentum_confirmation   : 0.20
         """
         indicator_signals = [
             s for s in primary_signals
@@ -423,10 +451,6 @@ class EntryGroup(BaseGroup):
             s for s in primary_signals
             if getattr(s, "signal_type", "") == "candlestick"
         ]
-        chart_signals = [
-            s for s in primary_signals
-            if getattr(s, "signal_type", "") == "chart_pattern"
-        ]
 
         def avg_quality(sigs: list) -> float:
             if not sigs:
@@ -435,7 +459,6 @@ class EntryGroup(BaseGroup):
 
         indicator_quality = avg_quality(indicator_signals)
         candlestick_quality = avg_quality(candlestick_signals)
-        chart_pattern_quality = avg_quality(chart_signals)
 
         structural_alignment = (
             1.0
@@ -449,35 +472,80 @@ class EntryGroup(BaseGroup):
             else 0.0
         )
 
-        historian_win_rate = (
-            historian_analog.win_rate if historian_analog is not None else 0.0
-        )
+        # ------------------------------------------------------------------
+        # momentum_confirmation: ADX strength + RSI direction + volume
+        # ------------------------------------------------------------------
+        mc = 0.0
+        adx = getattr(regime, "adx14", 0.0) if regime is not None else 0.0
+        if adx > 30:
+            mc += 0.40   # base 0.25 + extra 0.15
+        elif adx > 20:
+            mc += 0.25
 
-        raw_score = (
-            0.35 * chart_pattern_quality
-            + 0.25 * candlestick_quality
-            + 0.20 * indicator_quality
-            + 0.10 * structural_alignment
-            + 0.10 * historian_win_rate
-        )
+        # RSI direction: extract from indicator signal indicator_values
+        rsi14 = None
+        prev_rsi14 = None
+        volume_ratio = None
+        for sig in primary_signals:
+            iv = getattr(sig, "indicator_values", {})
+            if rsi14 is None and "rsi14" in iv:
+                rsi14 = iv["rsi14"]
+            if prev_rsi14 is None and "prev_rsi14" in iv:
+                prev_rsi14 = iv["prev_rsi14"]
+            if volume_ratio is None and "volume_ratio" in iv:
+                volume_ratio = iv["volume_ratio"]
 
-        # Normalize by the sum of ACTIVE component weights so excluded groups
-        # do not depress the ceiling below the threshold.  See module-level
-        # ACTIVE_COMPOSITE_WEIGHT_SUM for the active component set.
-        composite_score = (
-            raw_score / ACTIVE_COMPOSITE_WEIGHT_SUM
-            if ACTIVE_COMPOSITE_WEIGHT_SUM > 0
-            else 0.0
-        )
+        if rsi14 is not None and prev_rsi14 is not None and direction is not None:
+            dir_str = direction.value if hasattr(direction, "value") else str(direction).lower()
+            rsi_aligned = (
+                (dir_str == "long" and rsi14 > prev_rsi14)
+                or (dir_str == "short" and rsi14 < prev_rsi14)
+            )
+            if rsi_aligned:
+                mc += 0.30
+
+        # Volume bonus from indicator_values (if available)
+        if volume_ratio is not None:
+            if volume_ratio > 2.0:
+                mc += 0.30   # base 0.20 + extra 0.10
+            elif volume_ratio > 1.2:
+                mc += 0.20
+
+        momentum_confirmation = min(1.0, mc)
+
+        if historian_analog is not None:
+            # 5-component formula when historian is available
+            historian_score = historian_analog.win_rate  # 0.0–1.0
+            raw_score = (
+                0.30 * indicator_quality
+                + 0.22 * candlestick_quality
+                + 0.18 * structural_alignment
+                + 0.16 * momentum_confirmation
+                + 0.14 * historian_score
+            )
+            active_weight_sum = sum(_HISTORIAN_SCORE_COMPONENTS.values())
+        else:
+            # 4-component formula (no historian)
+            historian_score = None
+            raw_score = (
+                0.35 * indicator_quality
+                + 0.25 * candlestick_quality
+                + 0.20 * structural_alignment
+                + 0.20 * momentum_confirmation
+            )
+            active_weight_sum = ACTIVE_COMPOSITE_WEIGHT_SUM
+
+        # Weights sum to 1.0 — normalization is identity
+        composite_score = raw_score
 
         score_breakdown = {
-            "chart_pattern_quality": chart_pattern_quality,
-            "candlestick_quality": candlestick_quality,
             "indicator_quality": indicator_quality,
+            "candlestick_quality": candlestick_quality,
             "structural_alignment": structural_alignment,
-            "historian_win_rate": historian_win_rate,
+            "momentum_confirmation": round(momentum_confirmation, 6),
+            "historian_score": historian_score,
             "raw_score": round(raw_score, 6),
-            "active_weight_sum": ACTIVE_COMPOSITE_WEIGHT_SUM,
+            "active_weight_sum": active_weight_sum,
             "normalized_composite_score": round(composite_score, 6),
         }
 

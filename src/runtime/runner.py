@@ -98,6 +98,7 @@ class BtcBybitPaperRunner:
         self._risk_leverage = None
         self._exit = None
         self._performance_journal = None
+        self._historian = None
 
         # Learning layer
         self._journal_extension = None
@@ -155,6 +156,7 @@ class BtcBybitPaperRunner:
         from groups.risk_leverage.group import RiskLeverageGroup
         from groups.exit.group import ExitGroup
         from groups.performance_journal.group import PerformanceJournalGroup
+        from groups.historian.group import HistorianGroup
 
         config = {"journal_db_path": self._journal_db_path}
 
@@ -168,6 +170,7 @@ class BtcBybitPaperRunner:
         self._risk_leverage = RiskLeverageGroup(self._state, self._bus)
         self._exit = ExitGroup(self._state, self._bus)
         self._performance_journal = PerformanceJournalGroup(self._state, self._bus, config)
+        self._historian = HistorianGroup(self._state, self._bus)
 
         self._all_groups = [
             self._market_data,
@@ -175,6 +178,7 @@ class BtcBybitPaperRunner:
             self._indicators,           # before EntryGroup fires CandidateTradeEvent
             self._candlestick,
             self._technical_structure,
+            self._historian,            # Must precede EntryGroup so query() is callable
             self._entry,
             self._panel_decision,
             self._risk_leverage,
@@ -283,6 +287,12 @@ class BtcBybitPaperRunner:
                 self._journal_extension, self._outcome_source
             )
             self._performance_journal._outcome_attributor = outcome_attributor
+
+            # Wire HistorianGroup into EntryGroup so historian_analog feeds composite score.
+            if self._historian is not None and self._entry is not None:
+                self._entry._historian = self._historian
+                self._historian._extension = self._journal_extension
+                logger.info("Runner: HistorianGroup wired to EntryGroup.")
 
             logger.info(
                 "Runner: JournalExtension initialized and wired. "

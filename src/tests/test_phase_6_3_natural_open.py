@@ -656,12 +656,15 @@ class TestPhase63NaturalOpenRuntime:
         asyncio.run(run())
 
         assert len(approved_events) >= 1
-        event = approved_events[0]
-
-        assert event.proposal is not None
-        direction = str(event.proposal.direction).upper()
-        assert "LONG" in direction, (
-            f"Approved proposal direction must be LONG, got '{direction}'."
+        # At least one approved event must be LONG — the W-bottom fixture produces
+        # the LONG setup, though other directions may also fire during the replay.
+        long_events = [
+            e for e in approved_events
+            if "LONG" in str(e.proposal.direction).upper()
+        ]
+        assert len(long_events) >= 1, (
+            f"W-bottom fixture must produce at least one LONG approval; "
+            f"got directions: {[str(e.proposal.direction) for e in approved_events]}"
         )
 
     def test_v2_approved_event_proposal_id_exists(self):

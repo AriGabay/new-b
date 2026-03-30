@@ -6,7 +6,7 @@ Every evaluator uses a distinct analytical lens.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ class TraderVerdict:
     execution_concern: str   # e.g. "entry timing off" or "none"
     risk_concern: str        # e.g. "wide stop" or "none"
     explanation: str         # 2-3 sentence explanation of verdict
+    metadata: dict = field(default_factory=dict)  # evaluator-specific detected signals
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ class BaseTraderEvaluator:
         exec_concern: str,
         risk_concern: str,
         explanation: str,
+        metadata: Optional[dict] = None,
     ) -> TraderVerdict:
         return TraderVerdict(
             trader_id=self.trader_id,
@@ -63,6 +65,7 @@ class BaseTraderEvaluator:
             execution_concern=exec_concern,
             risk_concern=risk_concern,
             explanation=explanation,
+            metadata=metadata or {},
         )
 
     # ------------------------------------------------------------------
@@ -78,7 +81,7 @@ class BaseTraderEvaluator:
         return str(d).lower()
 
     @staticmethod
-    def _vote_from_score(score: float, approve_threshold: float = 6.5, reject_threshold: float = 4.5) -> str:
+    def _vote_from_score(score: float, approve_threshold: float = 6.0, reject_threshold: float = 4.0) -> str:
         if score >= approve_threshold:
             return "approve"
         if score <= reject_threshold:
@@ -101,18 +104,42 @@ class TrendFollowingEvaluator(BaseTraderEvaluator):
         direction = self._direction_str(packet)
 
         score = 5.0
+        ema_aligned = (
+            (direction == "long" and ind.ema_alignment in ("full_bull", "partial_bull"))
+            or (direction == "short" and ind.ema_alignment in ("full_bear", "partial_bear"))
+        )
 
-        # EMA alignment bonus
-        if direction == "long" and ind.ema_alignment in ("full_bull", "partial_bull"):
-            score += 2.0
-        elif direction == "short" and ind.ema_alignment in ("full_bear", "partial_bear"):
-            score += 2.0
-        else:
-            score -= 2.0  # counter-trend penalty
+        # EMA alignment: full alignment = strong bonus, counter-trend = heavy penalty
+        if direction == "long":
+            if ind.ema_alignment == "full_bull":
+                score += 2.5   # 8-9 territory with other bonuses
+            elif ind.ema_alignment == "partial_bull":
+                score += 1.5
+            elif ind.ema_alignment in ("full_bear", "partial_bear"):
+                score -= 2.5   # 2-3 territory — counter-trend
+            else:
+                score -= 1.5   # mixed/unknown
+        else:  # short
+            if ind.ema_alignment == "full_bear":
+                score += 2.5
+            elif ind.ema_alignment == "partial_bear":
+                score += 1.5
+            elif ind.ema_alignment in ("full_bull", "partial_bull"):
+                score -= 2.5
+            else:
+                score -= 1.5
 
-        # ADX strength
-        if ind.adx14 > 25:
+        # ADX regime awareness: tiered bonus
+        if ind.adx14 > 30:
+            score += 2.0   # strong trend — big bonus for trend-followers
+        elif ind.adx14 > 25:
             score += 1.5
+        elif ind.adx14 < 15:
+            score -= 0.5   # choppy market — slight penalty
+
+        # Counter-trend in strong trend: extra penalty to reach 2-3 range
+        if not ema_aligned and ind.adx14 > 30:
+            score -= 0.5
 
         # Structural trend match
         if direction == "long" and struct.trend_direction == "uptrend":
@@ -131,6 +158,15 @@ class TrendFollowingEvaluator(BaseTraderEvaluator):
         vote = self._vote_from_score(score)
         confidence = min(0.95, 0.5 + (score - 5.0) * 0.08)
 
+        meta = {
+            "ema_alignment": ind.ema_alignment,
+            "adx14": ind.adx14,
+            "trend_direction": struct.trend_direction,
+            "higher_highs": struct.higher_highs,
+            "higher_lows": struct.higher_lows,
+            "ema_aligned": ema_aligned,
+        }
+
         pro = (
             f"EMA alignment is {ind.ema_alignment} and ADX {ind.adx14:.1f} confirms "
             f"trend strength for a {direction} trade."
@@ -140,14 +176,14 @@ class TrendFollowingEvaluator(BaseTraderEvaluator):
             f"{struct.trend_direction} which may diverge from proposal."
         )
         exec_concern = "entry may be late in trend" if ind.adx14 > 40 else "none"
-        risk_concern = "counter-trend trade risk" if score < 5 else "none"
+        risk_concern = "counter-trend trade risk" if not ema_aligned else "none"
         explanation = (
-            f"EMA alignment ({ind.ema_alignment}) {'supports' if score >= 6 else 'opposes'} the "
+            f"EMA alignment ({ind.ema_alignment}) {'supports' if ema_aligned else 'opposes'} the "
             f"{direction} direction. ADX at {ind.adx14:.1f} indicates "
-            f"{'strong' if ind.adx14 > 25 else 'weak'} trend momentum. "
+            f"{'strong' if ind.adx14 > 25 else 'moderate' if ind.adx14 > 15 else 'weak'} trend momentum. "
             f"Structural trend is {struct.trend_direction}."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -165,37 +201,63 @@ class MomentumEvaluator(BaseTraderEvaluator):
         score = 5.0
 
         rsi = ind.rsi14
+        rsi_direction_aligned = (
+            (direction == "long" and ind.rsi_direction == "rising")
+            or (direction == "short" and ind.rsi_direction == "falling")
+        )
 
         if direction == "long":
             if 40 <= rsi <= 65:
-                score += 2.0
+                score += 2.0   # sweet spot for longs
+            elif 65 < rsi <= 75:
+                score += 0.5   # still ok, slightly extended
             elif rsi > 75:
-                score -= 2.0  # overbought
+                score -= 2.5   # overbought — chase risk
             elif rsi < 30:
-                score -= 1.0
-            if ind.rsi_direction == "rising":
-                score += 1.0
+                score -= 1.0   # oversold bounce territory (MeanReversion handles this better)
+            # RSI direction confirmation — bigger bonus when direction aligned
+            if rsi_direction_aligned:
+                score += 1.5 if 40 <= rsi <= 65 else 0.5
         else:  # short
             if 35 <= rsi <= 60:
                 score += 2.0
+            elif 25 <= rsi < 35:
+                score += 0.5
             elif rsi < 25:
-                score -= 2.0  # oversold, risky short
+                score -= 2.5   # oversold — risky short
             elif rsi > 70:
                 score -= 0.5
-            if ind.rsi_direction == "falling":
-                score += 1.0
+            if rsi_direction_aligned:
+                score += 1.5 if 35 <= rsi <= 60 else 0.5
 
         # Volume confirmation
-        if ind.volume_ratio > 1.5:
+        if ind.volume_ratio > 2.0:
+            score += 1.5   # surge — strong conviction
+        elif ind.volume_ratio > 1.5:
             score += 1.0
+        elif ind.volume_ratio > 1.2:
+            score += 0.5
         elif ind.volume_ratio < 0.8:
             score -= 1.0
+
+        # ADX regime awareness: trend-momentum synergy
+        if ind.adx14 > 25 and rsi_direction_aligned:
+            score += 0.5   # trending AND RSI confirming = strong momentum setup
 
         vote = self._vote_from_score(score)
         confidence = min(0.9, 0.45 + abs(rsi - 50) * 0.005 + (score - 5) * 0.06)
 
         overbought = rsi > 75 and direction == "long"
         oversold = rsi < 25 and direction == "short"
+
+        meta = {
+            "rsi14": rsi,
+            "rsi_direction": ind.rsi_direction,
+            "rsi_direction_aligned": rsi_direction_aligned,
+            "volume_ratio": ind.volume_ratio,
+            "volume_confirmed": ind.volume_ratio > 1.2,
+            "adx14": ind.adx14,
+        }
 
         pro = (
             f"RSI {rsi:.1f} with {ind.rsi_direction} momentum supports "
@@ -208,12 +270,12 @@ class MomentumEvaluator(BaseTraderEvaluator):
         exec_concern = "momentum overextended" if overbought or oversold else "none"
         risk_concern = "low volume confirmation" if ind.volume_ratio < 1.0 else "none"
         explanation = (
-            f"RSI at {rsi:.1f} is {'in ideal range' if 40 <= rsi <= 65 else 'outside ideal range'} for "
-            f"a {direction} trade, trending {ind.rsi_direction}. "
+            f"RSI at {rsi:.1f} is {'in ideal range' if (direction == 'long' and 40 <= rsi <= 65) or (direction == 'short' and 35 <= rsi <= 60) else 'outside ideal range'} for "
+            f"a {direction} trade, trending {ind.rsi_direction} ({'aligned' if rsi_direction_aligned else 'misaligned'}). "
             f"Volume ratio {ind.volume_ratio:.2f} {'provides' if ind.volume_ratio > 1.3 else 'lacks'} momentum confirmation. "
             f"Score {score:.1f} reflects overall momentum quality."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +291,28 @@ class MeanReversionEvaluator(BaseTraderEvaluator):
         ind = packet.indicators
         struct = packet.structure
         direction = self._direction_str(packet)
+
+        meta = {
+            "rsi14": ind.rsi14,
+            "bb_position": ind.bb_position,
+            "at_support": struct.at_support,
+            "at_resistance": struct.at_resistance,
+            "adx14": ind.adx14,
+            "adx_trending": ind.adx14 > 25,
+        }
+
+        # ADX awareness: strong trends don't revert — this evaluator should abstain
+        if ind.adx14 > 25:
+            return self._make_verdict(
+                5.5, "abstain", 0.3,
+                "Price may eventually revert but trend strength reduces probability.",
+                f"ADX {ind.adx14:.1f} > 25 indicates trending market — mean reversion setups have lower win rate.",
+                "strong trend running", "none",
+                f"ADX at {ind.adx14:.1f} indicates strong trend. Mean reversion specialist abstains: "
+                f"trend continuation is more probable than reversal at this momentum level. "
+                f"Will score normally once ADX falls below 25.",
+                metadata=meta,
+            )
 
         score = 3.0  # Default: trend-following trades are not their style
 
@@ -253,7 +337,9 @@ class MeanReversionEvaluator(BaseTraderEvaluator):
             score = 6.0
 
         vote = self._vote_from_score(score)
-        confidence = 0.8 if score >= 7 else (0.55 if score >= 5.5 else 0.3)
+        # Reduced confidence in 20-25 ADX zone (partial trend — reversion less reliable)
+        base_confidence = 0.8 if score >= 7 else (0.55 if score >= 5.5 else 0.3)
+        confidence = base_confidence * 0.8 if ind.adx14 >= 20 else base_confidence
 
         pro = (
             f"Price at {'support with RSI oversold' if direction == 'long' else 'resistance with RSI overbought'} "
@@ -271,7 +357,7 @@ class MeanReversionEvaluator(BaseTraderEvaluator):
             f"{'confirm' if score >= 7 else 'partially support' if score >= 5 else 'do not support'} an extreme reversal setup. "
             f"Support/resistance {'is' if (struct.at_support or struct.at_resistance) else 'is not'} present."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -317,12 +403,25 @@ class BreakoutEvaluator(BaseTraderEvaluator):
                 elif proximity_pct > 2.0:
                     score -= 1.0  # entry far from breakout
 
-        # BB squeeze context
-        if ind.bb_width_pct < 20:
-            score += 0.5  # possible squeeze setup
+        # BB squeeze context — tiered bonus: tighter squeeze = stronger pending move
+        bb_squeeze = "none"
+        if ind.bb_width_pct < 15:
+            score += 1.0   # very tight squeeze — high-probability explosive breakout
+            bb_squeeze = "very_tight"
+        elif ind.bb_width_pct < 20:
+            score += 0.5   # moderate squeeze
+            bb_squeeze = "tight"
 
         vote = self._vote_from_score(score)
         confidence = 0.75 if has_confirmed else 0.4
+
+        meta = {
+            "confirmed_patterns": list(cp.confirmed_patterns),
+            "volume_ratio": ind.volume_ratio,
+            "volume_confirmed": volume_ok,
+            "bb_width_pct": ind.bb_width_pct,
+            "bb_squeeze": bb_squeeze,
+        }
 
         pro = (
             f"{'Confirmed chart pattern breakout' if has_confirmed else 'Active pattern forming'} "
@@ -330,16 +429,17 @@ class BreakoutEvaluator(BaseTraderEvaluator):
         )
         anti = (
             f"{'Volume below breakout threshold' if not volume_ok else 'Breakout may be premature'}; "
-            f"BB width percentile {ind.bb_width_pct:.0f} {'indicates squeeze' if ind.bb_width_pct < 20 else 'is normal'}."
+            f"BB width percentile {ind.bb_width_pct:.0f} {'indicates tight squeeze' if bb_squeeze != 'none' else 'is normal'}."
         )
         exec_concern = "entry too far from breakout level" if cp.breakout_level is not None and score < 6 else "none"
         risk_concern = "low breakout volume" if not volume_ok else "none"
         explanation = (
             f"Breakout evaluator {'confirms' if score >= 7 else 'partially supports' if score >= 5 else 'rejects'} this {direction} setup. "
             f"{'Confirmed patterns: ' + ', '.join(cp.confirmed_patterns) if has_confirmed else 'No confirmed patterns present'}. "
-            f"Volume ratio {ind.volume_ratio:.2f} {'meets' if volume_ok else 'fails'} minimum breakout threshold."
+            f"Volume ratio {ind.volume_ratio:.2f} {'meets' if volume_ok else 'fails'} minimum breakout threshold. "
+            f"{'BB squeeze (' + bb_squeeze + ') adds breakout probability.' if bb_squeeze != 'none' else ''}"
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +482,15 @@ class StructureEvaluator(BaseTraderEvaluator):
         confidence = 0.85 if struct.structure_quality == "strong" else 0.6
 
         at_level = (struct.at_support and direction == "long") or (struct.at_resistance and direction == "short")
+        meta = {
+            "at_support": struct.at_support,
+            "at_resistance": struct.at_resistance,
+            "structure_quality": struct.structure_quality,
+            "trend_direction": struct.trend_direction,
+            "higher_highs": struct.higher_highs,
+            "higher_lows": struct.higher_lows,
+            "at_level": at_level,
+        }
         pro = (
             f"Trade is {'at key ' + ('support' if direction == 'long' else 'resistance') if at_level else 'near structure'} "
             f"with {struct.structure_quality} quality level providing solid reference point."
@@ -396,7 +505,7 @@ class StructureEvaluator(BaseTraderEvaluator):
             f"{'Price is at the level' if at_level else 'Price is not precisely at structure'}. "
             f"Higher-highs/higher-lows pattern: {struct.higher_highs}/{struct.higher_lows}."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -453,9 +562,20 @@ class CandlestickEvaluator(BaseTraderEvaluator):
         vote = self._vote_from_score(score)
         confidence = 0.7 if cs.pattern_at_structure else 0.5
 
+        direction_match = cs.pattern_direction and (
+            (direction == "long" and cs.pattern_direction == "bullish")
+            or (direction == "short" and cs.pattern_direction == "bearish")
+        )
+        meta = {
+            "primary_pattern": cs.primary_pattern,
+            "pattern_direction": cs.pattern_direction,
+            "pattern_at_structure": cs.pattern_at_structure,
+            "patterns_detected": list(cs.patterns_detected),
+            "direction_match": bool(direction_match),
+        }
         pro = (
             f"Candlestick '{cs.primary_pattern}' is {'at a structural level' if cs.pattern_at_structure else 'present'} "
-            f"with {'matching' if cs.pattern_direction and ((direction == 'long' and cs.pattern_direction == 'bullish') or (direction == 'short' and cs.pattern_direction == 'bearish')) else 'neutral'} direction."
+            f"with {'matching' if direction_match else 'neutral'} direction."
         )
         anti = (
             f"Candlestick patterns are single-bar signals with {'high' if cs.pattern_at_structure else 'moderate'} "
@@ -471,7 +591,7 @@ class CandlestickEvaluator(BaseTraderEvaluator):
             f"which {'significantly enhances' if cs.pattern_at_structure else 'moderately affects'} reliability. "
             f"Score {score:.1f} reflects pattern quality and alignment with {direction} proposal."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +650,8 @@ class RiskParityEvaluator(BaseTraderEvaluator):
             f"Minimum acceptable R:R is 1.5; ideal is 2.0+. "
             f"{'Trade meets' if rr >= 2.0 else 'Trade marginally meets' if rr >= 1.5 else 'Trade fails'} risk parity criteria."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"r_r_ratio": rr, "stop_distance_pct": stop_pct}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +707,8 @@ class VolatilityEvaluator(BaseTraderEvaluator):
             f"{'High volatility requires wider stops and stronger signal consensus.' if vol_regime == 'high' else 'Low volatility may reduce follow-through on breakouts.' if vol_regime == 'low' else 'Normal volatility supports standard trade execution.'} "
             f"Score adjusted to {score:.1f}."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"volatility_regime": vol_regime, "atr_ratio": atr_ratio}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -637,7 +759,8 @@ class VolumeProfileEvaluator(BaseTraderEvaluator):
             f"{'Strong volume surge confirms institutional engagement.' if ind.volume_character == 'surge' else 'Volume is within normal range.' if ind.volume_character == 'normal' else 'Volume character reduces confidence.'} "
             f"Score {score:.1f} reflects volume-based conviction for this {direction} setup."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"volume_ratio": ind.volume_ratio, "volume_character": ind.volume_character, "volume_confirmed": ind.volume_ratio > 1.2}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +811,8 @@ class MacroRegimeEvaluator(BaseTraderEvaluator):
             f"This {direction} trade {'aligns with' if not cross_regime else 'fights'} the macro regime. "
             f"{'High-probability setup with macro tailwind.' if score >= 7 else 'Neutral macro context.' if score >= 5 else 'Significant headwind from macro regime.'}"
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"btc_macro": macro, "trending": regime.trending, "macro_aligned": not cross_regime}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -705,17 +829,32 @@ class ContraryEvaluator(BaseTraderEvaluator):
         struct = packet.structure
         ind = packet.indicators
         direction = self._direction_str(packet)
+        rsi = ind.rsi14
 
-        # Only approve if very high quality
+        meta = {
+            "rsi14": rsi,
+            "r_r_ratio": proposal.r_r_ratio,
+            "structure_quality": struct.structure_quality,
+            "volume_ratio": ind.volume_ratio,
+            "adx14": ind.adx14,
+        }
+
+        # RSI extreme check — momentum overextension is contrary's primary alert
+        rsi_extreme = (direction == "long" and rsi > 80) or (direction == "short" and rsi < 20)
+
+        # Score logic: skeptical but not a permaveto
         if proposal.r_r_ratio > 3.0 and struct.structure_quality == "strong":
-            score = 7.0
-            vote = "approve"
+            score = 7.5  # exceptional setup — even skeptics can't argue much
             confidence = 0.55
+        elif proposal.r_r_ratio >= 2.5 and struct.structure_quality in ("strong", "moderate"):
+            score = 6.0  # good setup — abstain with slight lean
+            confidence = 0.5
+        elif rsi_extreme:
+            score = 3.0  # momentum-chasing at extreme — contrary rejects
+            confidence = 0.7
         else:
-            # Skeptical by default
-            score = 4.0
-            vote = "reject"
-            confidence = 0.6
+            score = 5.0  # skeptical but not vetoing — abstain
+            confidence = 0.5
 
         # Identify the biggest risk factor
         risks = []
@@ -729,21 +868,25 @@ class ContraryEvaluator(BaseTraderEvaluator):
             risks.append("weak trend strength")
         if ind.volatility_regime == "high":
             risks.append("high volatility regime")
+        if rsi_extreme:
+            risks.insert(0, f"RSI {rsi:.0f} extreme — momentum overextended")
 
         biggest_risk = risks[0] if risks else "market conditions uncertain"
 
+        vote = self._vote_from_score(score)
         pro = f"Even skeptics acknowledge the {direction} trade has a defined stop and measurable target."
         anti = (
             f"Contrary view: {biggest_risk} — the market rarely moves cleanly in the proposed direction."
         )
-        exec_concern = "overconfidence in setup quality" if proposal.setup_quality == "A" else "none"
+        exec_concern = "overconfidence in setup quality" if proposal.setup_quality == "A" and score < 6 else "none"
         risk_concern = biggest_risk
         explanation = (
-            f"Contrary evaluator applies maximum skepticism to the {direction} proposal. "
+            f"Contrary evaluator applies skepticism to the {direction} proposal. "
             f"Primary concern: {biggest_risk}. "
-            f"Only approves trades with R:R > 3.0 AND strong structure; current R:R is {proposal.r_r_ratio:.2f}."
+            f"Approves only with R:R > 3.0 AND strong structure (current R:R {proposal.r_r_ratio:.2f}). "
+            f"{'RSI extreme overextension detected.' if rsi_extreme else 'Neutral skepticism applied.'}"
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -794,7 +937,8 @@ class ProfitTargetEvaluator(BaseTraderEvaluator):
             f"{'Confirmed pattern provides objective target.' if cp.primary_confirmed else 'No confirmed pattern — target is structurally derived.'} "
             f"Score {score:.1f} reflects target achievability for this {direction} trade."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"r_r_ratio": rr, "has_chart_target": bool(cp.primary_confirmed and cp.conservative_target is not None)}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -852,7 +996,8 @@ class EntryTimingEvaluator(BaseTraderEvaluator):
             f"{'Structural level provides ideal entry reference.' if at_level else 'Entry lacks structural level anchor.'} "
             f"Score {score:.1f} reflects timing quality for {direction} entry."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"atr_ratio": ind.atr14_vs_sma20, "bb_position": ind.bb_position, "at_structure": at_level}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -915,8 +1060,17 @@ class ConfluenceEvaluator(BaseTraderEvaluator):
             agreement_count += 1
 
         score = min(10.0, 3.0 + agreement_count * 1.5)
-        vote = "approve" if score >= 7.0 else ("reject" if score < 4.5 else "abstain")
+        vote = self._vote_from_score(score)
         confidence = min(0.9, agreement_count * 0.12)
+
+        meta = {
+            "agreement_count": agreement_count,
+            "ema_aligned": (direction == "long" and ind.ema_alignment in ("full_bull", "partial_bull"))
+                           or (direction == "short" and ind.ema_alignment in ("full_bear", "partial_bear")),
+            "rsi_aligned": (direction == "long" and ind.rsi_direction == "rising" and ind.rsi14 < 70)
+                           or (direction == "short" and ind.rsi_direction == "falling" and ind.rsi14 > 30),
+            "volume_confirmed": ind.volume_ratio > 1.3,
+        }
 
         pro = (
             f"{agreement_count} independent signals agree with the {direction} proposal, "
@@ -932,7 +1086,7 @@ class ConfluenceEvaluator(BaseTraderEvaluator):
             f"Score formula: 3.0 + ({agreement_count} × 1.5) = {score:.1f}. "
             f"{'Strong multi-signal agreement.' if agreement_count >= 5 else 'Moderate confluence.' if agreement_count >= 3 else 'Weak confluence — setup needs more signal alignment.'}"
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1007,7 +1161,8 @@ class DrawdownRiskEvaluator(BaseTraderEvaluator):
             f"{'Stop too wide for capital efficiency.' if stop_pct > 3.0 else 'Stop width acceptable.'} "
             f"{'R:R below minimum — expected value is poor.' if rr < 2.0 else 'R:R supports positive expected value.'}"
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"stop_pct": stop_pct, "r_r_ratio": rr, "volatility_regime": ind.volatility_regime}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1073,7 +1228,8 @@ class LeverageSpecialistEvaluator(BaseTraderEvaluator):
             f"{'Conservative leverage preserves capital on stop-out.' if leverage <= 2 else 'Moderate leverage acceptable with quality setup.' if leverage <= 3 else 'Elevated leverage significantly increases liquidation risk.'} "
             f"Setup quality '{quality}' {'supports' if quality == 'A' else 'is neutral for' if quality == 'B' else 'does not justify'} this leverage level."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"leverage": leverage, "setup_quality": quality}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1289,12 @@ class PatternCompletionEvaluator(BaseTraderEvaluator):
             f"{'Conservative target set at ' + str(cp.conservative_target) + '.' if cp.conservative_target else 'No measured-move target available.'} "
             f"Score {score:.1f} reflects pattern completion quality for {direction} trade."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {
+            "confirmed_patterns": list(cp.confirmed_patterns),
+            "active_patterns": list(cp.active_patterns),
+            "has_target": cp.conservative_target is not None,
+        }
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1198,7 +1359,14 @@ class WickAnalysisEvaluator(BaseTraderEvaluator):
             f"Patterns detected: {cs.patterns_detected or 'none'}. "
             f"{'Wick confirms structural rejection in trade direction.' if score >= 7 else 'No strong wick confirmation — standard candle analysis.'}"
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {
+            "wick_signal": wick_signal,
+            "has_bullish_wick": has_bullish_wick,
+            "has_bearish_wick": has_bearish_wick,
+            "at_support": struct.at_support,
+            "at_resistance": struct.at_resistance,
+        }
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1260,7 +1428,13 @@ class MarketContextEvaluator(BaseTraderEvaluator):
             f"{'Consolidation phase reduces confidence in breakout timing.' if in_consolidation else 'Context is coherent for trade entry.'} "
             f"Score {score:.1f} reflects overall market coherence."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {
+            "in_consolidation": in_consolidation,
+            "trend_direction": struct.trend_direction,
+            "btc_macro": regime.btc_macro,
+            "ema_alignment": ind.ema_alignment,
+        }
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1333,7 +1507,8 @@ class ExecutionQualityEvaluator(BaseTraderEvaluator):
             f"Setup quality '{quality}' with stop {stop_pct:.2f}% and R:R {rr:.2f}. "
             f"Score {score:.1f} reflects overall execution readiness for {direction} entry."
         )
-        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation)
+        meta = {"stop_pct": stop_pct, "r_r_ratio": rr, "setup_quality": quality}
+        return self._make_verdict(score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation, metadata=meta)
 
 
 # ---------------------------------------------------------------------------

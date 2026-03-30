@@ -140,9 +140,8 @@ class TestMDPState:
     def test_to_vector_length_includes_evaluators(self):
         state = _make_mdp_state()
         vec = state.to_vector()
-        # 25 base features + 20 eval scores + 20 eval confidences = 65
-        # (macro_position_modifier and fear_greed_index removed as permanently inert)
-        assert len(vec) == 25 + 20 + 20
+        # 25 base features + 2 macro features + 20 eval scores + 20 eval confidences = 67
+        assert len(vec) == 25 + 2 + 20 + 20
 
     def test_direction_encoding(self):
         from mdp.state import MDPState
@@ -1404,13 +1403,19 @@ class TestOutcomeAttribution:
         cursor.execute("SELECT trade_id FROM setup_packets WHERE packet_id=?", (packet_id,))
         assert cursor.fetchone()[0] == "pos_backfill"
 
-    def test_no_inert_state_fields(self):
-        """MDPState must not contain macro_position_modifier or fear_greed_index."""
+    def test_macro_fields_are_real_not_inert(self):
+        """macro_position_modifier and fear_greed_index must be real fields
+        populated by NewsMacroGroup — not hardcoded constants."""
         from mdp.state import MDPState
         import dataclasses
         field_names = {f.name for f in dataclasses.fields(MDPState)}
-        assert "macro_position_modifier" not in field_names
-        assert "fear_greed_index" not in field_names
+        # These fields are now real (populated by NewsMacroGroup each bar close).
+        assert "macro_position_modifier" in field_names
+        assert "fear_greed_index" in field_names
+        # Verify defaults are sensible neutral values
+        state = _make_mdp_state()
+        assert state.macro_position_modifier == 1.0   # full size by default
+        assert state.fear_greed_index == 50.0          # neutral by default
 
     def test_trades_last_24_bars_in_mdp_state(self):
         """trades_last_24_bars must be a real field in MDPState."""
@@ -1428,5 +1433,5 @@ class TestOutcomeAttribution:
         vec_b = state_b.to_vector()
         # Vectors must differ (state is different)
         assert vec_a != vec_b
-        # Length must be 65, not 67
-        assert len(vec_a) == 65
+        # Length: 25 base + 2 macro + 20 eval scores + 20 eval confidences = 67
+        assert len(vec_a) == 67

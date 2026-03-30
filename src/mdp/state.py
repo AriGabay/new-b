@@ -85,6 +85,17 @@ class MDPState:
     recent_win_rate: float       # last 20 trades (0.5 = unknown)
     current_streak: int          # positive = win streak, negative = loss streak
     trades_last_24_bars: int
+    # Evaluator-specific detected signals (populated from TraderVerdict.metadata)
+    # Fields with defaults must follow all non-default fields.
+    evaluator_metadata: dict = field(default_factory=dict)
+    # Macro state — populated by NewsMacroGroup (real runtime data, not inert constants).
+    macro_position_modifier: float = 1.0   # 0.0=block, 0.5=halved, 1.0=full
+    fear_greed_index: float = 50.0         # 0–100; <20=extreme fear, >80=extreme greed
+    # Chart pattern state — populated by MDPStateBuilder from ChartPatternGroup cache.
+    # None when ChartPatternGroup is not available (e.g. in test contexts).
+    active_chart_patterns: Optional[list] = None          # hypothesis refs in formation
+    chart_pattern_completion_pct: Optional[float] = None  # avg completion 0.0–1.0
+    chart_pattern_measured_move: Optional[float] = None   # avg confirmed measured move
 
     def to_dict(self) -> dict:
         """Serialize to JSON-safe dict for transition log storage."""
@@ -113,6 +124,7 @@ class MDPState:
             "evaluator_scores": self.evaluator_scores,
             "evaluator_votes": self.evaluator_votes,
             "evaluator_confidences": self.evaluator_confidences,
+            "evaluator_metadata": self.evaluator_metadata,
             "score_std_dev": self.score_std_dev,
             "bull_bear_split": self.bull_bear_split,
             "key_risks": self.key_risks,
@@ -125,6 +137,11 @@ class MDPState:
             "recent_win_rate": self.recent_win_rate,
             "current_streak": self.current_streak,
             "trades_last_24_bars": self.trades_last_24_bars,
+            "macro_position_modifier": self.macro_position_modifier,
+            "fear_greed_index": self.fear_greed_index,
+            "active_chart_patterns": self.active_chart_patterns,
+            "chart_pattern_completion_pct": self.chart_pattern_completion_pct,
+            "chart_pattern_measured_move": self.chart_pattern_measured_move,
         }
 
     def to_vector(self) -> list:
@@ -185,6 +202,8 @@ class MDPState:
             self.recent_win_rate,
             (self.current_streak + 10.0) / 20.0,   # shift: −10..+10 → 0..1
             float(self.trades_last_24_bars) / 10.0,
+            self.macro_position_modifier,           # 0.0, 0.5, or 1.0
+            (self.fear_greed_index - 50.0) / 50.0, # normalize: 0..100 → −1..+1
         ]
 
         return base + eval_scores_enc + eval_confs_enc

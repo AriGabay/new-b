@@ -330,12 +330,13 @@ class RiskLeverageGroup(BaseGroup):
 
     def _check_event_risk(self, proposal: CandidateTradeProposal) -> Decimal:
         """
-        Rule 8: If high-impact event within 48h → apply 0.5× size reduction.
-        Returns size reduction multiplier (1.0 = full, 0.5 = half size).
-        Never blocks — only reduces.
-        Phase 3: no news event system yet — always return full size.
+        Rule 8: Apply macro position modifier from NewsMacroGroup.
+        Returns size multiplier: 1.0 (full), 0.5 (reduced), 0.0 (block).
+        Read from SystemState.macro_position_modifier — updated each bar close
+        by NewsMacroGroup based on event calendar and Fear & Greed index.
         """
-        return Decimal("1.0")
+        modifier = getattr(self.state, "macro_position_modifier", 1.0)
+        return Decimal(str(modifier))
 
     def _check_plan_completeness(self, proposal: CandidateTradeProposal) -> RiskCheckResult:
         """

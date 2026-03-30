@@ -83,6 +83,10 @@ class SystemState:
         self.risk_state = RiskState()
         self.last_close_by_symbol: dict[str, Decimal] = {}
         self.eligible_symbols: set[str] = set()
+        # Macro state — updated by NewsMacroGroup on each bar close.
+        # macro_position_modifier: 0.0 (block), 0.5 (halved), 1.0 (full)
+        self.macro_position_modifier: float = 1.0
+        self.fear_greed_index: float = 50.0
         self._lock = asyncio.Lock()
 
     async def update_regime(self, regime: RegimeContext) -> None:
@@ -147,6 +151,12 @@ class SystemState:
         """Record the latest close price for a symbol. Called by MarketDataGroup."""
         async with self._lock:
             self.last_close_by_symbol[symbol] = price
+
+    async def update_macro_state(self, modifier: float, fear_greed: float) -> None:
+        """Update macro position modifier and fear/greed index. Called by NewsMacroGroup."""
+        async with self._lock:
+            self.macro_position_modifier = max(0.0, min(1.0, modifier))
+            self.fear_greed_index = fear_greed
 
     async def reset_daily_pnl(self) -> None:
         async with self._lock:

@@ -87,6 +87,12 @@ class SystemConfig:
     journal:       JournalConfig    = field(default_factory=JournalConfig)
     backtest:      BacktestConfig   = field(default_factory=BacktestConfig)
     event_calendar_path: Optional[str] = None
+    # Chart pattern plugin system (Phase 6.5+)
+    # When False, ChartPatternGroup runs but pattern signals are only delivered
+    # to PanelDecisionGroup via cache wiring (not included in composite score).
+    # When True, chart pattern signals will also contribute to EntryGroup's
+    # composite score via a future GroupSignalEvent pathway.
+    enable_chart_patterns: bool = False
 
 
 def load_config(config_file: Optional[str] = None) -> SystemConfig:

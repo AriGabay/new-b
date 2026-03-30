@@ -28,6 +28,7 @@ class GroupID(str, Enum):
     EXIT                     = "exit"
     RISK_LEVERAGE            = "risk_leverage"
     PERFORMANCE_JOURNAL      = "performance_journal_learning"
+    HISTORIAN                = "historian"
 
 
 @dataclass

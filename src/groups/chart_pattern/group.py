@@ -36,6 +36,7 @@ from core.events import EventBus, FeatureReadyEvent, GroupSignalEvent, SystemEve
 from core.registry import GroupID
 from core.schemas import ChartPatternSignal, FeatureVector, GroupSignalBundle
 from core.state import SystemState
+from .registry import PatternRegistry
 from .state_machine import (
     DescendingTriangleMachine,
     DoubleBottomMachine,
@@ -84,8 +85,14 @@ class ChartPatternGroup(BaseGroup):
         self._active_cache: dict[str, list] = {}
 
     async def _setup(self) -> None:
+        # Auto-discover all pattern plugins so @PatternRegistry.register decorators fire
+        PatternRegistry.autodiscover()
         await self.bus.subscribe(FeatureReadyEvent, self.handle_event)
-        logger.info("ChartPatternGroup subscribed to FeatureReadyEvent.")
+        logger.info(
+            "ChartPatternGroup subscribed to FeatureReadyEvent. "
+            "Registry patterns: %s",
+            list(PatternRegistry.get_all_by_hypothesis().keys()),
+        )
 
     async def _handle_event(self, event: SystemEvent) -> None:
         if isinstance(event, FeatureReadyEvent) and event.features:
@@ -162,10 +169,21 @@ class ChartPatternGroup(BaseGroup):
         self._active_cache[symbol] = active_names
 
     def _initialize_machines_for_symbol(self, symbol: str, timeframe: str) -> None:
-        """Create PatternStateMachine instances for all active hypotheses for symbol."""
+        """
+        Create PatternStateMachine instances for all active hypotheses for symbol.
+
+        Prefers the PatternRegistry (populated via auto-discovery) so that new
+        patterns added to patterns/ are picked up without touching this file.
+        Falls back to the PATTERN_MACHINES dict when the registry is empty
+        (e.g. in unit tests that construct ChartPatternGroup directly without
+        calling _setup()).
+        """
         if symbol not in self._machines:
             self._machines[symbol] = {}
-            for hyp_id, MachineClass in self.PATTERN_MACHINES.items():
+            # Prefer registry; fall back to PATTERN_MACHINES for test compat
+            registry_map = PatternRegistry.get_all_by_hypothesis()
+            source = registry_map if registry_map else self.PATTERN_MACHINES
+            for hyp_id, MachineClass in source.items():
                 self._machines[symbol][hyp_id] = MachineClass(
                     pattern_type=hyp_id,
                     symbol=symbol,

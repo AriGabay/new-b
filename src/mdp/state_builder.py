@@ -49,7 +49,8 @@ class MDPStateBuilder:
         self,
         packet: BTCSetupPacket,
         panel: PanelResult,
-        system_state=None,     # Optional[SystemState] — avoid import cycle
+        system_state=None,          # Optional[SystemState] — avoid import cycle
+        chart_pattern_group=None,   # Optional[ChartPatternGroup] — avoid import cycle
     ) -> "MDPState":
         """Extract all relevant features into MDPState."""
         from mdp.state import MDPState
@@ -74,11 +75,14 @@ class MDPStateBuilder:
         evaluator_scores: dict[str, float] = {}
         evaluator_votes: dict[str, str] = {}
         evaluator_confidences: dict[str, float] = {}
+        evaluator_metadata: dict[str, dict] = {}
 
         for verdict in panel.verdicts:
             evaluator_scores[verdict.trader_id] = verdict.score
             evaluator_votes[verdict.trader_id] = verdict.vote
             evaluator_confidences[verdict.trader_id] = verdict.confidence
+            if verdict.metadata:
+                evaluator_metadata[verdict.trader_id] = verdict.metadata
 
         # ------------------------------------------------------------------
         # Score standard deviation (disagreement metric)
@@ -145,6 +149,54 @@ class MDPStateBuilder:
             recent_win_rate = 0.5
             trades_last_24_bars = 0
 
+        # ------------------------------------------------------------------
+        # Macro state (populated by NewsMacroGroup; defaults when unavailable)
+        # ------------------------------------------------------------------
+        macro_position_modifier = getattr(system_state, "macro_position_modifier", 1.0) \
+            if system_state is not None else 1.0
+        fear_greed_index = getattr(system_state, "fear_greed_index", 50.0) \
+            if system_state is not None else 50.0
+
+        # ------------------------------------------------------------------
+        # Chart pattern state (from ChartPatternGroup cache; optional)
+        # ------------------------------------------------------------------
+        active_chart_patterns = None
+        chart_pattern_completion_pct = None
+        chart_pattern_measured_move = None
+
+        if chart_pattern_group is not None:
+            symbol = packet.symbol
+            # Active patterns: hypothesis refs currently in a non-terminal state
+            active = list(chart_pattern_group._active_cache.get(symbol, []))
+            if active:
+                active_chart_patterns = active
+
+            # Completion pct: average bars_in_formation / max_bars across active machines
+            from groups.chart_pattern.state_machine import PatternState as _PS
+            machines = chart_pattern_group._machines.get(symbol, {})
+            completion_pcts = []
+            for machine in machines.values():
+                if machine.state not in (
+                    _PS.INACTIVE, _PS.CONFIRMED, _PS.FAILED, _PS.EXPIRED
+                ):
+                    pct = (
+                        machine.bars_in_formation / machine.max_bars
+                        if machine.max_bars > 0 else 0.0
+                    )
+                    completion_pcts.append(min(1.0, pct))
+            if completion_pcts:
+                chart_pattern_completion_pct = sum(completion_pcts) / len(completion_pcts)
+
+            # Measured move: average across confirmed signals in this bar's cache
+            signals = chart_pattern_group._signals_cache.get(symbol, [])
+            moves = [
+                float(s.measured_move)
+                for s in signals
+                if getattr(s, "measured_move", None) and float(s.measured_move) > 0
+            ]
+            if moves:
+                chart_pattern_measured_move = sum(moves) / len(moves)
+
         return MDPState(
             # Proposal
             direction=direction_str,
@@ -174,6 +226,7 @@ class MDPStateBuilder:
             evaluator_scores=evaluator_scores,
             evaluator_votes=evaluator_votes,
             evaluator_confidences=evaluator_confidences,
+            evaluator_metadata=evaluator_metadata,
             score_std_dev=score_std_dev,
             bull_bear_split=bull_bear_split,
             key_risks=list(panel.key_risks),
@@ -187,4 +240,9 @@ class MDPStateBuilder:
             recent_win_rate=recent_win_rate,
             current_streak=current_streak,
             trades_last_24_bars=trades_last_24_bars,
+            macro_position_modifier=macro_position_modifier,
+            fear_greed_index=fear_greed_index,
+            active_chart_patterns=active_chart_patterns,
+            chart_pattern_completion_pct=chart_pattern_completion_pct,
+            chart_pattern_measured_move=chart_pattern_measured_move,
         )

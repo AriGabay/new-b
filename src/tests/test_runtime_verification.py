@@ -349,16 +349,20 @@ async def test_panel_gate_blocks_candidate_trade_bypass():
     await runner.bus.subscribe(RiskDecisionEvent, capture_risk)
     await runner.bus.subscribe(PanelApprovedProposalEvent, lambda e: panel_approved_events.append(e))
 
-    # Inject a proposal that the panel will HOLD (7/20 typical approve rate)
-    proposal = make_proposal()
+    # Inject a SHORT proposal in a bullish market — this clearly gets held by the panel.
+    # TrendFollowingEvaluator penalises counter-trend heavily (full_bull EMA → SHORT = low score),
+    # MacroRegimeEvaluator penalises SHORT in bull macro, and Contrary/MeanReversion abstain.
+    # The panel will comfortably hold this proposal (< 11 approvals).
+    proposal = make_proposal(direction="SHORT", score=0.30)
     await runner.bus.publish(CandidateTradeEvent(proposal=proposal))
     await asyncio.sleep(0.1)
     await runner.teardown()
 
-    # Panel should have HELD this (7/20 < 14/20 threshold)
+    # Panel should have HELD this counter-trend proposal (< 11/20 approvals)
     # Therefore PanelApprovedProposalEvent should NOT be published
     assert len(panel_approved_events) == 0, (
-        f"Panel held proposal but PanelApprovedProposalEvent was published: {panel_approved_events}"
+        f"Panel held SHORT-in-bull-market proposal but PanelApprovedProposalEvent was published: "
+        f"approve_count={panel_approved_events[0].panel_approve_count if panel_approved_events else 'N/A'}"
     )
 
     # Because panel held AND direct bypass is blocked, RiskDecisionEvent should NOT be published
