@@ -68,7 +68,7 @@ class TraderEvaluatorPanel:
     APPROVE_THRESHOLD = 15   # default fallback (optimized in Phase 5)
     MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
     AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
-    _REGIME_THRESHOLDS = {"bull": 12, "trending": 12, "ranging": 14, "bear": 15}
+    _REGIME_THRESHOLDS = {"bull": 14, "trending": 14, "ranging": 15, "bear": 15}
 
     def __init__(self) -> None:
         self._evaluators = [

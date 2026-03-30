@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 # Rule thresholds (named constants for auditability)
 # Phase 11B: regime-adaptive thresholds replace hardcoded approval counts
 _REGIME_THRESHOLDS = {
-    "bull":     {"base": 12, "hc_offset": 3, "defer_offset": -3},
-    "trending": {"base": 12, "hc_offset": 3, "defer_offset": -3},
-    "ranging":  {"base": 14, "hc_offset": 3, "defer_offset": -3},
+    "bull":     {"base": 14, "hc_offset": 3, "defer_offset": -3},
+    "trending": {"base": 14, "hc_offset": 3, "defer_offset": -3},
+    "ranging":  {"base": 15, "hc_offset": 3, "defer_offset": -3},
     "bear":     {"base": 15, "hc_offset": 3, "defer_offset": -3},
 }
-_DEFAULT_REGIME = {"base": 14, "hc_offset": 3, "defer_offset": -3}
+_DEFAULT_REGIME = {"base": 15, "hc_offset": 3, "defer_offset": -3}
 
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5

@@ -47,7 +47,7 @@ _PANEL_APPROVE_THRESHOLD = 14  # default fallback
 
 # Phase 11B: regime-adaptive base thresholds
 _REGIME_BASE_THRESHOLDS = {
-    "bull": 12, "trending": 12, "ranging": 14, "bear": 15,
+    "bull": 14, "trending": 14, "ranging": 15, "bear": 15,
 }
 
 # Rail 6: high-volatility adds this offset on top of regime base threshold
