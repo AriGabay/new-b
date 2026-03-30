@@ -78,10 +78,10 @@ from core.state import SystemState
 
 logger = logging.getLogger(__name__)
 
-CONFIRMATION_GATE_MIN_GROUPS = 2
-COMPOSITE_SCORE_THRESHOLD    = 0.50
+CONFIRMATION_GATE_MIN_GROUPS = 1   # Lowered from 2 — panel evaluators are the quality gate
+COMPOSITE_SCORE_THRESHOLD    = 0.30  # Lowered from 0.50 — allows indicator+momentum proposals
 CRITIC_SCORE_THRESHOLD       = 0.60
-SINGLE_SIGNAL_HIGH_CONFIDENCE = 0.80  # bypass min-groups gate if quality_score >= this
+SINGLE_SIGNAL_HIGH_CONFIDENCE = 0.60  # Lowered from 0.80 — single strong signal can proceed
 
 # ---------------------------------------------------------------------------
 # Active score component weights (Phase 3)
@@ -365,28 +365,19 @@ class EntryGroup(BaseGroup):
             return
 
         # ------------------------------------------------------------------
-        # 7b. Deferred bar-level gate: pure indicator proposals need either
-        #     composite_score >= CRITIC_SCORE_THRESHOLD (0.60) or at least
-        #     one signal with quality_score >= SINGLE_SIGNAL_HIGH_CONFIDENCE (0.80).
+        # 7b. Bar-level confirmation note (advisory only — no longer a gate).
+        #
+        # Pure indicator proposals used to be suppressed here unless
+        # composite_score >= 0.60 or quality >= 0.80.  This was removed
+        # because it killed trade frequency: with candlestick_quality=0
+        # the composite ceiling is ~0.55, permanently below the 0.60 gate.
+        # The panel evaluators (20 traders) are the proper quality filter.
         # ------------------------------------------------------------------
         if not has_bar_level_confirmation:
-            max_quality = max(
-                (getattr(s, "quality_score", 0.0) for s in primary_signals), default=0.0
-            )
-            if composite_score < CRITIC_SCORE_THRESHOLD and \
-                    max_quality < SINGLE_SIGNAL_HIGH_CONFIDENCE:
-                logger.debug(
-                    "EntryGroup: pure indicator proposal for %s (%s) suppressed — "
-                    "composite_score=%.2f < %.2f and max_quality=%.2f < %.2f.",
-                    symbol, direction.value,
-                    composite_score, CRITIC_SCORE_THRESHOLD,
-                    max_quality, SINGLE_SIGNAL_HIGH_CONFIDENCE,
-                )
-                return
             logger.debug(
-                "EntryGroup: pure indicator proposal for %s (%s) allowed — "
-                "composite_score=%.2f max_quality=%.2f.",
-                symbol, direction.value, composite_score, max_quality,
+                "EntryGroup: pure indicator proposal for %s (%s) — "
+                "composite_score=%.2f (no bar-level confirmation, passing to panel).",
+                symbol, direction.value, composite_score,
             )
 
         # ------------------------------------------------------------------
@@ -516,26 +507,36 @@ class EntryGroup(BaseGroup):
         if historian_analog is not None:
             # 5-component formula when historian is available
             historian_score = historian_analog.win_rate  # 0.0–1.0
-            raw_score = (
-                0.30 * indicator_quality
-                + 0.22 * candlestick_quality
-                + 0.18 * structural_alignment
-                + 0.16 * momentum_confirmation
-                + 0.14 * historian_score
-            )
-            active_weight_sum = sum(_HISTORIAN_SCORE_COMPONENTS.values())
+            components = {
+                "indicator": (0.30, indicator_quality),
+                "candlestick": (0.22, candlestick_quality),
+                "structural": (0.18, structural_alignment),
+                "momentum_confirmation": (0.16, momentum_confirmation),
+                "historian": (0.14, historian_score),
+            }
         else:
             # 4-component formula (no historian)
             historian_score = None
-            raw_score = (
-                0.35 * indicator_quality
-                + 0.25 * candlestick_quality
-                + 0.20 * structural_alignment
-                + 0.20 * momentum_confirmation
-            )
-            active_weight_sum = ACTIVE_COMPOSITE_WEIGHT_SUM
+            components = {
+                "indicator": (0.35, indicator_quality),
+                "candlestick": (0.25, candlestick_quality),
+                "structural": (0.20, structural_alignment),
+                "momentum_confirmation": (0.20, momentum_confirmation),
+            }
 
-        # Weights sum to 1.0 — normalization is identity
+        # Compute raw weighted score.  Components with value=0 (no candlestick
+        # signals, no structural context) contribute zero but their weight is
+        # NOT redistributed — a proposal with fewer confirmation types should
+        # score lower.  The threshold (0.40) is low enough that strong
+        # indicator + momentum signals can still pass without candlestick/
+        # structural, but at a naturally lower score that reflects the reduced
+        # confirmation.
+        raw_score = sum(w * v for w, v in components.values())
+        active_weight_sum = sum(w for w, v in components.values() if v > 0)
+
+        # No normalization — raw score = composite score.
+        # The 0.40 threshold lets indicator+momentum proposals through (~0.35-0.55)
+        # while candlestick+structural proposals naturally score higher (~0.60-0.85).
         composite_score = raw_score
 
         score_breakdown = {

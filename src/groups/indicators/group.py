@@ -57,9 +57,9 @@ from features.compute import FeatureComputer
 logger = logging.getLogger(__name__)
 
 # BB squeeze threshold: bb_width_pct below this → squeeze active
-BB_SQUEEZE_THRESHOLD = 25.0
-# EMA crossover ADX minimum
-EMA_CROSS_ADX_MIN = 20.0
+BB_SQUEEZE_THRESHOLD = 35.0  # Relaxed from 25 → 35 for more squeeze detections on 1h
+# EMA crossover ADX minimum (relaxed from 20 → 15 for broader signal generation)
+EMA_CROSS_ADX_MIN = 15.0
 # MACD history kept per symbol (closes for recompute)
 MACD_HISTORY_SIZE = 60
 # RSI divergence lookback bars
@@ -152,6 +152,24 @@ class IndicatorsGroup(BaseGroup):
         bb_sig = self._detect_bb_signal(fv)
         if bb_sig is not None:
             signals.append(bb_sig)
+
+        # H3-006: DISABLED — fires on every trending bar (6,628× in 2yr),
+        # overwhelming quality signals and causing 0% WR when combined with
+        # active-weight normalization. H3-005 trend continuation (3,230×)
+        # is the proper established-trend signal.
+        # trend_sig = self._detect_trend_aligned(fv)
+        # if trend_sig is not None:
+        #     signals.append(trend_sig)
+
+        # H3-007: RSI mean reversion — fires when RSI crosses key levels
+        rsi_mr_sig = self._detect_rsi_mean_reversion(fv)
+        if rsi_mr_sig is not None:
+            signals.append(rsi_mr_sig)
+
+        # H3-008: Volume breakout — fires on high-volume momentum bars
+        vol_sig = self._detect_volume_breakout(fv)
+        if vol_sig is not None:
+            signals.append(vol_sig)
 
         # 5. Compute regime and update state (sub-agent 6)
         regime = self._compute_regime(fv)
@@ -367,10 +385,10 @@ class IndicatorsGroup(BaseGroup):
           - Shallow pullbacks that touch or approach EMA20 (prime continuation zone)
           - Excludes deep retracements far below EMA20 (different setup type)
         """
-        # Minimum trend strength and volume
-        if fv.adx14 < 25.0:
+        # Minimum trend strength (relaxed from 25 → 20 for more signals)
+        if fv.adx14 < 20.0:
             return None
-        if fv.volume_ratio < 1.0:
+        if fv.volume_ratio < 0.8:
             return None
 
         ema20 = float(fv.ema20)
@@ -380,7 +398,7 @@ class IndicatorsGroup(BaseGroup):
 
         # Require meaningful EMA separation so we don't fire near the crossover bar
         ema_separation_pct = abs(ema50 - ema20) / ema50 if ema50 > 0 else 0.0
-        if ema_separation_pct < 0.002:   # < 0.2 % — EMAs too close
+        if ema_separation_pct < 0.001:   # < 0.1 % — EMAs too close (relaxed from 0.2%)
             return None
 
         full_bear = fv.ema20 < fv.ema50 and fv.ema50 < fv.ema200
@@ -393,10 +411,10 @@ class IndicatorsGroup(BaseGroup):
 
         if full_bear:
             # SHORT continuation: price pulls back to EMA20 from below.
-            # close within 3 % BELOW EMA20 — the classic retest zone.
-            price_near_ema20 = (close > ema20 * 0.97) and (close <= ema20 * 1.01)
-            # RSI pulled back toward mid-zone (not oversold, not still overbought)
-            rsi_ok = 35.0 < rsi < 65.0
+            # close within 5% BELOW EMA20 — wider pullback zone (was 3%)
+            price_near_ema20 = (close > ema20 * 0.95) and (close <= ema20 * 1.02)
+            # RSI in mid-zone (widened from 35-65 to 30-70)
+            rsi_ok = 30.0 < rsi < 70.0
             if not (price_near_ema20 and rsi_ok):
                 return None
             direction = Direction.SHORT
@@ -405,8 +423,8 @@ class IndicatorsGroup(BaseGroup):
 
         else:  # full_bull
             # LONG continuation: price pulls back to EMA20 from above.
-            price_near_ema20 = (close < ema20 * 1.03) and (close >= ema20 * 0.99)
-            rsi_ok = 35.0 < rsi < 65.0
+            price_near_ema20 = (close < ema20 * 1.05) and (close >= ema20 * 0.98)
+            rsi_ok = 30.0 < rsi < 70.0
             if not (price_near_ema20 and rsi_ok):
                 return None
             direction = Direction.LONG
@@ -443,6 +461,191 @@ class IndicatorsGroup(BaseGroup):
         )
 
     # ------------------------------------------------------------------
+    # Sub-agent 3b: _detect_trend_aligned (H3-006) — high-frequency trend signal
+    # ------------------------------------------------------------------
+
+    def _detect_trend_aligned(self, fv: FeatureVector) -> Optional[IndicatorSignal]:
+        """
+        H3-006: Trend-aligned bar signal.
+
+        Fires on EVERY bar where:
+          - Full EMA alignment (EMA20 > EMA50 > EMA200 for bull, inverse for bear)
+          - ADX >= 20 (trending market)
+          - Price on the correct side of EMA20 (above for bull, below for bear)
+
+        This is a HIGH-FREQUENCY signal designed to ensure the pipeline has
+        enough CandidateTradeEvents. Quality is moderate (0.55) — the panel
+        evaluators are responsible for filtering out bad setups.
+
+        Cooldown: only fires if no H3-005 (trend continuation) fired on this bar,
+        to avoid duplicate signals.
+        """
+        if fv.adx14 < 20.0:
+            return None
+
+        close = float(fv.close)
+        ema20 = float(fv.ema20)
+        ema50 = float(fv.ema50)
+        ema200 = float(fv.ema200)
+
+        full_bull = ema20 > ema50 > ema200
+        full_bear = ema20 < ema50 < ema200
+
+        if not full_bull and not full_bear:
+            return None
+
+        if full_bull and close >= ema20:
+            direction = Direction.LONG
+            ema_context = "full_bull_alignment"
+        elif full_bear and close <= ema20:
+            direction = Direction.SHORT
+            ema_context = "full_bear_alignment"
+        else:
+            return None
+
+        return IndicatorSignal(
+            group_id=self.group_id.value,
+            symbol=fv.symbol,
+            timeframe=fv.timeframe,
+            timestamp=fv.timestamp,
+            direction=direction,
+            signal_type="indicator",
+            signal_subtype="trend_aligned",
+            hypothesis_ref="H3-006",
+            quality_score=0.0,   # scored later
+            context_confirmed=True,
+            confirmation_required=False,
+            confirmed_on_bar_close=True,
+            indicator_name="trend_aligned",
+            indicator_values={
+                "ema20": ema20, "ema50": ema50, "ema200": ema200,
+                "close": close, "adx14": fv.adx14,
+                "ema_context": ema_context,
+            },
+            context_filter_passed=True,
+            metadata={"setup_type": "trend_aligned"},
+        )
+
+    # ------------------------------------------------------------------
+    # Sub-agent 3c: _detect_rsi_mean_reversion (H3-007)
+    # ------------------------------------------------------------------
+
+    def _detect_rsi_mean_reversion(self, fv: FeatureVector) -> Optional[IndicatorSignal]:
+        """
+        H3-007: RSI mean reversion signal.
+
+        Fires when RSI crosses key mean-reversion thresholds:
+          - LONG:  RSI crosses above 35 from below (oversold recovery)
+          - SHORT: RSI crosses below 65 from above (overbought fade)
+
+        Wider than H3-001 (which requires RSI < 30 / > 70 extremes).
+        Should fire 80-150 times over 2 years on 1h BTC.
+        """
+        if fv.impulse_flag:
+            return None
+
+        rsi = fv.rsi14
+        prev_rsi = fv.prev_rsi14
+
+        # Bullish: RSI crosses above 35 from below
+        if prev_rsi < 35 and rsi >= 35 and rsi < 55:
+            direction = Direction.LONG
+            subtype = "rsi_mean_reversion_long"
+        # Bearish: RSI crosses below 65 from above
+        elif prev_rsi > 65 and rsi <= 65 and rsi > 45:
+            direction = Direction.SHORT
+            subtype = "rsi_mean_reversion_short"
+        else:
+            return None
+
+        return IndicatorSignal(
+            group_id=self.group_id.value,
+            symbol=fv.symbol,
+            timeframe=fv.timeframe,
+            timestamp=fv.timestamp,
+            direction=direction,
+            signal_type="indicator",
+            signal_subtype=subtype,
+            hypothesis_ref="H3-007",
+            quality_score=0.0,  # scored later
+            context_confirmed=True,
+            confirmation_required=False,
+            confirmed_on_bar_close=True,
+            indicator_name="rsi_mean_reversion",
+            indicator_values={
+                "rsi14": rsi,
+                "prev_rsi14": prev_rsi,
+                "adx14": fv.adx14,
+                "volume_ratio": fv.volume_ratio,
+            },
+            context_filter_passed=True,
+            metadata={"rsi_zone": "mean_reversion"},
+        )
+
+    # ------------------------------------------------------------------
+    # Sub-agent 3d: _detect_volume_breakout (H3-008)
+    # ------------------------------------------------------------------
+
+    def _detect_volume_breakout(self, fv: FeatureVector) -> Optional[IndicatorSignal]:
+        """
+        H3-008: Volume breakout signal.
+
+        Fires when:
+          - volume_ratio > 2.0 (volume > 2× 20-bar SMA)
+          - Price move > 0.5× ATR14 in one bar (meaningful momentum)
+          - ADX >= 15 (not totally dead market)
+
+        Direction from bar direction (close vs open).
+        Should fire 100-200 times over 2 years on 1h BTC.
+        """
+        if fv.volume_ratio < 2.0:
+            return None
+        if fv.adx14 < 15.0:
+            return None
+
+        # Price move must be significant relative to ATR
+        bar_move = abs(float(fv.close - fv.open))
+        atr = float(fv.atr14) if fv.atr14 > 0 else 1.0
+        if bar_move < 0.5 * atr:
+            return None
+
+        if fv.close > fv.open:
+            direction = Direction.LONG
+            subtype = "volume_breakout_long"
+        elif fv.close < fv.open:
+            direction = Direction.SHORT
+            subtype = "volume_breakout_short"
+        else:
+            return None
+
+        return IndicatorSignal(
+            group_id=self.group_id.value,
+            symbol=fv.symbol,
+            timeframe=fv.timeframe,
+            timestamp=fv.timestamp,
+            direction=direction,
+            signal_type="indicator",
+            signal_subtype=subtype,
+            hypothesis_ref="H3-008",
+            quality_score=0.0,  # scored later
+            context_confirmed=True,
+            confirmation_required=False,
+            confirmed_on_bar_close=True,
+            indicator_name="volume_breakout",
+            indicator_values={
+                "volume_ratio": fv.volume_ratio,
+                "bar_move": bar_move,
+                "atr14": atr,
+                "move_atr_ratio": round(bar_move / atr, 3),
+                "adx14": fv.adx14,
+                "rsi14": fv.rsi14,
+                "prev_rsi14": fv.prev_rsi14,
+            },
+            context_filter_passed=True,
+            metadata={"breakout_type": "volume"},
+        )
+
+    # ------------------------------------------------------------------
     # Sub-agent 4: _detect_rsi_signal (H3-001)
     # ------------------------------------------------------------------
 
@@ -462,7 +665,7 @@ class IndicatorsGroup(BaseGroup):
         rsi_rising = rsi > prev_rsi
 
         # Oversold bounce setup (H3-001 bullish divergence proxy)
-        if rsi < 30 and rsi_rising and fv.adx14 >= 20:
+        if rsi < 30 and rsi_rising and fv.adx14 >= 15:
             return IndicatorSignal(
                 group_id=self.group_id.value,
                 symbol=fv.symbol,
@@ -487,7 +690,7 @@ class IndicatorsGroup(BaseGroup):
             )
 
         # Overbought warning (bearish pressure)
-        if rsi > 70 and not rsi_rising and fv.adx14 >= 20:
+        if rsi > 70 and not rsi_rising and fv.adx14 >= 15:
             return IndicatorSignal(
                 group_id=self.group_id.value,
                 symbol=fv.symbol,
@@ -516,7 +719,7 @@ class IndicatorsGroup(BaseGroup):
         prices = self._price_history.get(symbol, [])
         rsis = self._rsi_history.get(symbol, [])
 
-        if len(prices) >= 5 and len(rsis) >= 5 and fv.adx14 >= 25:
+        if len(prices) >= 5 and len(rsis) >= 5 and fv.adx14 >= 18:
             # Bullish divergence: recent price lower than 5 bars ago, RSI higher
             price_5ago = prices[-5]
             rsi_5ago = rsis[-5]
@@ -683,7 +886,7 @@ class IndicatorsGroup(BaseGroup):
         # Check for breakout after squeeze
         if self._squeeze_active[symbol]:
             close = fv.close
-            if close > fv.bb_upper and fv.volume_ratio > 1.5:
+            if close > fv.bb_upper and fv.volume_ratio > 1.2:
                 self._squeeze_active[symbol] = False
                 return IndicatorSignal(
                     group_id=self.group_id.value,
@@ -710,7 +913,7 @@ class IndicatorsGroup(BaseGroup):
                     context_filter_passed=True,
                     metadata={"breakout_side": "upper"},
                 )
-            elif close < fv.bb_lower and fv.volume_ratio > 1.5:
+            elif close < fv.bb_lower and fv.volume_ratio > 1.2:
                 self._squeeze_active[symbol] = False
                 return IndicatorSignal(
                     group_id=self.group_id.value,
@@ -873,7 +1076,7 @@ class IndicatorsGroup(BaseGroup):
             # H3-005 gets the same boost as H3-002 and H3-004: it fires in
             # established-trend conditions that are meaningfully different from
             # lower-quality indicator-only signals.
-            if sig.hypothesis_ref in ("H3-002", "H3-004", "H3-005"):
+            if sig.hypothesis_ref in ("H3-002", "H3-004", "H3-005", "H3-007", "H3-008"):
                 score += 0.05
 
             # Cap at 1.0

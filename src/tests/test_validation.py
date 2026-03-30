@@ -537,7 +537,7 @@ def test_threshold_analyzer_has_production_row():
     report = analyzer.analyze(records)
     prod_rows = [r for r in report["rows"] if r.get("is_production")]
     assert len(prod_rows) == 1
-    assert prod_rows[0]["approve_threshold"] == 11
+    assert prod_rows[0]["approve_threshold"] == 14  # Phase 4 optimized
     assert prod_rows[0]["min_avg_score"] == 5.8
 
 

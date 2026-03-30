@@ -17,12 +17,15 @@ from .schemas import ModeGate, Position, RegimeContext
 
 @dataclass
 class PortfolioState:
-    equity:              Decimal = Decimal("100000")   # Default: $100k
-    available:           Decimal = Decimal("100000")   # Unallocated capital
+    equity:              Decimal = Decimal("1000")    # Default: $1k
+    available:           Decimal = Decimal("1000")    # Unallocated capital
     open_positions:      dict[str, Position] = field(default_factory=dict)
     daily_pnl:           Decimal = Decimal("0")
     daily_pnl_pct:       float = 0.0
-    high_water_mark:     Decimal = Decimal("100000")
+    weekly_pnl:          Decimal = Decimal("0")
+    weekly_pnl_pct:      float = 0.0
+    weekly_reset_at:     Optional[datetime] = None
+    high_water_mark:     Decimal = Decimal("1000")
     drawdown_pct:        float = 0.0
     consecutive_losses:  int = 0
     total_trades:        int = 0
@@ -64,7 +67,7 @@ class SystemState:
     def __init__(
         self,
         mode: ModeGate = ModeGate.RESEARCH,
-        initial_equity: Decimal = Decimal("100000"),
+        initial_equity: Decimal = Decimal("1000"),
     ) -> None:
         self.mode = mode
         self.portfolio = PortfolioState(
@@ -114,7 +117,11 @@ class SystemState:
             self.portfolio.daily_pnl += pnl_usd
             self.portfolio.daily_pnl_pct = float(
                 self.portfolio.daily_pnl / self.portfolio.equity
-            )
+            ) if self.portfolio.equity != 0 else 0.0
+            self.portfolio.weekly_pnl += pnl_usd
+            self.portfolio.weekly_pnl_pct = float(
+                self.portfolio.weekly_pnl / self.portfolio.equity
+            ) if self.portfolio.equity != 0 else 0.0
 
             # Record outcome in rolling window (keep last 20)
             self.portfolio.recent_outcomes.append(pnl_usd >= 0)
@@ -163,3 +170,9 @@ class SystemState:
             self.portfolio.daily_pnl = Decimal("0")
             self.portfolio.daily_pnl_pct = 0.0
             self.portfolio.daily_reset_at = datetime.utcnow()
+
+    async def reset_weekly_pnl(self) -> None:
+        async with self._lock:
+            self.portfolio.weekly_pnl = Decimal("0")
+            self.portfolio.weekly_pnl_pct = 0.0
+            self.portfolio.weekly_reset_at = datetime.utcnow()

@@ -72,14 +72,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_RISK_FRACTION  = Decimal("0.01")   # 1% per trade (used for R tracking)
 # Leveraged futures risk limits — calibrated for 5×–35× leverage model
 # where a single 1R loss can be 10–18% of equity.
-DAILY_LOSS_LIMIT       = -0.20             # −20% daily PnL (allows 1–2 full losing trades)
+DAILY_LOSS_LIMIT       = -0.15             # −15% daily PnL max
+WEEKLY_LOSS_LIMIT      = -0.30             # −30% weekly PnL max
 MAX_DRAWDOWN_HALT      = 0.40              # 40% drawdown halts system
 PUMP_VOLUME_RATIO      = 5.0               # 5× normal volume = pump signal
 
 # Leverage-driven sizing (perpetual futures model)
 MIN_LEVERAGE           = 5.0               # Minimum leverage for any approved trade
 MAX_LEVERAGE           = 35.0              # Maximum leverage cap
-MAX_RISK_PER_TRADE     = 0.10              # 10% of equity max risk per trade
+MAX_RISK_PER_TRADE     = 0.05              # 5% of equity max risk per trade (lowered for $1k equity)
 DEFAULT_MAX_BARS       = 72                # Time stop: 72 bars (3 days on 1h)
 
 # Portfolio exposure limits — in MARGIN terms (notional/leverage), not raw notional.
@@ -253,11 +254,17 @@ class RiskLeverageGroup(BaseGroup):
         return RiskCheckResult.approved_ok()
 
     def _check_daily_loss_limit(self) -> RiskCheckResult:
-        """Rule 2: Block new entries if daily_pnl_pct < −2%."""
+        """Rule 2: Block new entries if daily_pnl_pct < −15% or weekly_pnl_pct < −30%."""
         if self.state.portfolio.daily_pnl_pct < DAILY_LOSS_LIMIT:
             return RiskCheckResult.rejected(
                 RejectionCode.DAILY_LOSS_LIMIT,
                 f"Daily PnL {self.state.portfolio.daily_pnl_pct:.1%} below {DAILY_LOSS_LIMIT:.1%} limit.",
+            )
+        weekly_pnl_pct = getattr(self.state.portfolio, "weekly_pnl_pct", 0.0)
+        if weekly_pnl_pct < WEEKLY_LOSS_LIMIT:
+            return RiskCheckResult.rejected(
+                RejectionCode.DAILY_LOSS_LIMIT,
+                f"Weekly PnL {weekly_pnl_pct:.1%} below {WEEKLY_LOSS_LIMIT:.1%} limit.",
             )
         return RiskCheckResult.approved_ok()
 
@@ -460,10 +467,24 @@ class RiskLeverageGroup(BaseGroup):
 
         # Position size from leverage (apply event-risk size_reduction and MDP size_multiplier)
         size_usd = equity * Decimal(str(leverage)) * size_reduction * Decimal(str(size_multiplier))
+
+        # Cap notional at 3× equity to prevent oversized positions on small accounts
+        max_notional = equity * Decimal("3.0")
+        if size_usd > max_notional:
+            size_usd = max_notional
+
         size_base = size_usd / proposal.entry_price if proposal.entry_price > 0 else Decimal("0")
 
         # R amount = actual risk in USD (for exit trailing-stop logic and tracking)
         r_amount = size_base * stop_dist
+
+        # Cap r_amount at 10% of equity — hard per-trade risk ceiling
+        max_risk = equity * Decimal("0.10")
+        if r_amount > max_risk and r_amount > 0:
+            scale_factor = max_risk / r_amount
+            size_base = size_base * scale_factor
+            size_usd = size_base * proposal.entry_price if proposal.entry_price > 0 else Decimal("0")
+            r_amount = max_risk
 
         # Risk fraction = r_amount / equity (for record-keeping)
         risk_fraction = float(r_amount / equity) if equity > 0 else 0.0

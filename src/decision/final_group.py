@@ -43,7 +43,11 @@ from traders.panel import PanelResult
 logger = logging.getLogger(__name__)
 
 # Panel approval threshold constant (referenced by hold-rationale text)
-_PANEL_APPROVE_THRESHOLD = 11
+_PANEL_APPROVE_THRESHOLD = 14  # Phase 4: aligned with panel.APPROVE_THRESHOLD
+
+# Rail 6: high-volatility requires this many approvals (default: 14)
+# Made configurable so backtest sweeps can test different values.
+_RAIL6_HIGH_VOL_THRESHOLD = 17  # Phase 4: panel_threshold + 3 = 14 + 3
 
 
 @dataclass
@@ -196,9 +200,10 @@ class FinalDecisionGroup:
             rails_triggered.append("long trade in bear regime blocked")
 
         # Rail 6: high volatility requires stronger consensus
-        if regime.volatility_regime == "high" and panel.approve_count < 14:
+        _r6_thresh = _RAIL6_HIGH_VOL_THRESHOLD
+        if regime.volatility_regime == "high" and panel.approve_count < _r6_thresh:
             rails_triggered.append(
-                f"high volatility requires 14 approves (got {panel.approve_count})"
+                f"high volatility requires {_r6_thresh} approves (got {panel.approve_count})"
             )
 
         # ------------------------------------------------------------------
@@ -327,9 +332,10 @@ class FinalDecisionGroup:
         )
         if regime.btc_macro == "bear" and direction_value == "long":
             rails_triggered.append("long trade in bear regime blocked")
-        if regime.volatility_regime == "high" and panel.approve_count < 14:
+        _r6_thresh = _RAIL6_HIGH_VOL_THRESHOLD
+        if regime.volatility_regime == "high" and panel.approve_count < _r6_thresh:
             rails_triggered.append(
-                f"high volatility requires 14 approves (got {panel.approve_count})"
+                f"high volatility requires {_r6_thresh} approves (got {panel.approve_count})"
             )
 
         decision.safety_rails_triggered = rails_triggered

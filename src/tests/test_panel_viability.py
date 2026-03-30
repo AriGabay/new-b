@@ -433,9 +433,9 @@ def test_ideal_phase3_proposal_passes_final_decision():
 
 
 def test_panel_approve_threshold_unchanged():
-    """APPROVE_THRESHOLD set to 11/20 for increased trade frequency."""
+    """APPROVE_THRESHOLD optimized to 14/20 in Phase 4 backtest tuning."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 11
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 14
 
 
 def test_panel_min_avg_score_unchanged():

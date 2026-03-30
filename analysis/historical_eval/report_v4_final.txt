@@ -1,0 +1,130 @@
+═══════════════════════════════════════════════════════════════
+  V4 FINAL BACKTEST REPORT — Signal Generation Overhaul
+  Date: 2026-03-30
+  Data: BTCUSDT 1h, 18,288 bars (Dec 2023 - Jan 2026)
+  Initial Equity: $1,000
+═══════════════════════════════════════════════════════════════
+
+1. FINAL METRICS vs TARGETS
+───────────────────────────────────────────────────────────────
+  Metric          Target    Result    Status
+  Trades/week     >= 3      1.3       FAIL
+  Win rate        >= 50%    61.7%     PASS
+  Profit factor   >= 1.1    1.41      PASS
+  Max drawdown    < 35%     30.6%     PASS
+  Net P&L         > 0       +$517     PASS
+  AvgW >= AvgL    yes       $20/$23   FAIL
+───────────────────────────────────────────────────────────────
+  Score: 4/6 targets met
+
+  Final equity: $1,517 (+51.7% return over ~2 years)
+  Total trades: 141
+  Winning: 87 (61.7%)  |  Losing: 54 (38.3%)
+
+
+2. COMPARISON: V1 → V2 → V4
+───────────────────────────────────────────────────────────────
+  Metric          V1 (EMA)    V2 (MDP)    V4 (Final)   Change
+  Trades          64          21          141          +6.7x
+  Win Rate        45.3%       52.4%       61.7%        +16.4pp
+  PF              0.77        0.83        1.41         +83%
+  Return          -0.84%      -17.87%     +51.7%       +52.5pp
+  Max DD          n/a         n/a         30.6%        —
+  AvgW/AvgL       n/a         n/a         $20/$23      —
+
+
+3. SIGNAL DIAGNOSTIC (before → after)
+───────────────────────────────────────────────────────────────
+  Hypothesis        Before   After    Change
+  H3-001 (RSI)      ~50      5,716    ~114x
+  H3-002 (EMA X)    ~25      286      ~11x
+  H3-004 (BB)       ~10      1,266    ~127x
+  H3-005 (Trend C)  ~100     3,230    ~32x
+  H3-007 (RSI MR)   0        842      NEW
+  H3-008 (Vol BO)   0        1,411    NEW
+  H2-006 (Strong E) 0        262      NEW
+  ────────────────────────────────────
+  TOTAL             ~185     13,013   ~70x
+
+  Signal generation fixes:
+  - H3-001: ADX requirement lowered (20→15 for OS/OB, 25→18 for divergence)
+  - H3-004: BB_SQUEEZE_THRESHOLD raised (25→35), breakout volume lowered (1.5→1.2)
+  - H3-007 NEW: RSI mean reversion (crosses 35↑ for LONG, 65↓ for SHORT)
+  - H3-008 NEW: Volume breakout (vol>2x avg, bar_move>0.5×ATR)
+  - H2-006 NEW: Strong engulfing without S/R (body > 1.5×ATR)
+  - H3-006: DISABLED (fired 6,628x — too noisy, overwhelmed quality signals)
+
+
+4. PIPELINE FUNNEL
+───────────────────────────────────────────────────────────────
+  Stage                    Count     Conversion
+  Total signals            ~18,000   —
+  CandidateTradeEvents     9,191     —
+  Panel approved           ~151      1.6% of proposals
+  Risk approved            141       93.4% of panel-approved
+  Trades closed            141       100% of risk-approved
+
+  Key bottleneck identified & fixed: Daily PnL was NEVER RESET
+  during backtest (bug). After fixing, trades went 19→146.
+
+
+5. OPTIMIZATION ITERATIONS (18 total)
+───────────────────────────────────────────────────────────────
+  #   Change                              T   TPW  WR    PF    DD    PnL    W/L     Score
+  1   Baseline T=14 risk=5%              146  1.3  56.2% 0.99  33.1% -$16   20/26   3/6
+  9   Tight trail 1.0/0.7/0.4           146  1.3  58.9% 1.04  35.3% +$58   20/27   2/6
+  10  Trail 0.8/0.5/0.3 bars=48         146  1.3  56.8% 1.10  28.4% +$163  22/26   4/6
+  14  Trail 0.6/0.4/0.3 bars=36 (BEST)  146  1.3  53.4% 1.38  29.0% +$577  27/22   5/6*
+  18  Trail 0.6/0.4/0.3 bars=24         147  1.3  62.6% 1.21  29.9% +$244  15/21   4/6
+  FINAL (permanent settings)             141  1.3  61.7% 1.41  30.6% +$517  20/23   4/6
+
+  * I14 achieved 5/6 with monkey-patched settings; permanent settings
+    give 4/6 due to slight MDP threshold interaction effects.
+
+
+6. CODE CHANGES SUMMARY
+───────────────────────────────────────────────────────────────
+  File                                    Change
+  src/groups/indicators/group.py          Added H3-007 (RSI MR), H3-008 (Vol BO)
+                                          Disabled H3-006 (trend_aligned)
+                                          Relaxed H3-001 ADX (20→15, 25→18)
+                                          Raised BB_SQUEEZE_THRESHOLD (25→35)
+                                          Lowered BB breakout vol (1.5→1.2)
+  src/groups/candlestick/group.py         Added H2-006 (strong engulfing w/o S/R)
+  src/groups/entry/group.py               Lowered COMPOSITE_SCORE_THRESHOLD (0.50→0.30)
+                                          Lowered SINGLE_SIGNAL_HIGH_CONFIDENCE (0.80→0.60)
+                                          Lowered CONFIRMATION_GATE_MIN_GROUPS (2→1)
+                                          Removed pure-indicator suppression gate
+  src/groups/exit/group.py                Tightened trailing stops (1.5/1.0/0.6 → 0.6/0.4/0.3)
+                                          Lowered MAX_BARS_TO_HOLD (72→36)
+                                          Lowered BREAKEVEN_BARS (24→12)
+                                          Lowered TRAIL_ACTIVATE_R (0.75→0.50)
+  src/groups/risk_leverage/group.py       Lowered MAX_RISK_PER_TRADE (0.10→0.05)
+  src/traders/panel.py                    Raised APPROVE_THRESHOLD (11→14)
+  src/mdp/policy.py                       Aligned MDP thresholds to T=14
+                                          Relaxed REDUCE (streak -4→-8, DD 0.25→0.38)
+  src/decision/final_group.py             Aligned panel threshold + Rail 6
+  src/backtest/engine.py                  BUGFIX: Added daily/weekly PnL reset
+  src/scripts/diagnose_signals.py         NEW: signal diagnostic script
+
+
+7. REMAINING GAP: TRADE FREQUENCY
+───────────────────────────────────────────────────────────────
+  Current: 1.3 trades/week (141 in 110 weeks)
+  Target:  3.0 trades/week (330 in 110 weeks)
+  Gap:     2.3x more trades needed
+
+  Root cause: Panel at T=14 approves only 151 of 9,191 proposals (1.6%).
+  The panel evaluators (20 deterministic traders) are highly selective at
+  T=14 because they require strong EMA alignment + directional confirmation.
+  Lowering to T=13 increases trades but WR drops to 43% (unprofitable).
+
+  Structural limit: The panel is the quality gate. Below T=14, proposals
+  lack sufficient confirmation diversity and lose money. Above T=14,
+  too few proposals pass.
+
+  The system is profitable at 1.3 trades/week: +51.7% return, PF 1.41,
+  61.7% WR. The trade frequency target of 3/week would require either
+  (a) fundamentally different signal types that the panel evaluators
+  approve at T=14, or (b) multi-symbol trading across BTC, ETH, SOL etc.
+═══════════════════════════════════════════════════════════════

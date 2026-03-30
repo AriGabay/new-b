@@ -80,7 +80,7 @@ class BacktestConfig:
 class SystemConfig:
     """Top-level config object passed into every group at startup."""
     mode:          ModeGate        = ModeGate.RESEARCH
-    initial_equity: Decimal        = Decimal("100000")
+    initial_equity: Decimal        = Decimal("1000")
     market_data:   MarketDataConfig = field(default_factory=MarketDataConfig)
     risk:          RiskConfig       = field(default_factory=RiskConfig)
     entry:         EntryConfig      = field(default_factory=EntryConfig)

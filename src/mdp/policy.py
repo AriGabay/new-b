@@ -29,26 +29,29 @@ from mdp.actions import MDPAction
 logger = logging.getLogger(__name__)
 
 # Rule thresholds (named constants for auditability)
-HC_MIN_APPROVALS    = 14
+# Phase 4: thresholds aligned with panel APPROVE_THRESHOLD=14
+HC_MIN_APPROVALS    = 17    # threshold + 3 (capped at 20)
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5
 HC_MAX_DRAWDOWN     = 0.10
 HC_MIN_WIN_RATE     = 0.50
 
-MED_MIN_APPROVALS   = 11
+MED_MIN_APPROVALS   = 14    # = panel threshold
 MED_MIN_AVG_SCORE   = 5.8
 MED_MIN_RR          = 2.0
 
-SMALL_MIN_APPROVALS = 11
+SMALL_MIN_APPROVALS = 14    # = panel threshold
 SMALL_MIN_AVG_SCORE = 5.8
 
-DEFER_MIN_APPROVALS = 8
+DEFER_MIN_APPROVALS = 11    # threshold - 3
 DEFER_MIN_AVG_SCORE = 5.5
 DEFER_MIN_COMPOSITE = 0.65
 DEFER_MAX_STD_DEV   = 2.0
 
-REDUCE_MAX_STREAK   = -4
-REDUCE_MAX_DRAWDOWN = 0.25
+# Phase 4: relaxed from -4/0.25 to prevent premature trade blocking
+# With 56% WR, 8 consecutive losses has only 0.15% probability
+REDUCE_MAX_STREAK   = -8
+REDUCE_MAX_DRAWDOWN = 0.38
 
 
 class MDPPolicy:

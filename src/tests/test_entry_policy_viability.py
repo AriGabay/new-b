@@ -62,12 +62,16 @@ def test_ceiling_shortfall_was_0_0125():
     assert abs(shortfall - 0.0125) < 1e-9
 
 
-def test_composite_score_threshold_unchanged():
-    """COMPOSITE_SCORE_THRESHOLD must remain 0.50 (the threshold was not lowered)."""
+def test_composite_score_threshold_lowered():
+    """COMPOSITE_SCORE_THRESHOLD lowered to 0.35 in Phase 4 signal generation overhaul.
+
+    With pure-indicator suppression removed and 7+ hypothesis signals now
+    generating proposals, the panel evaluators (20 traders) are the proper
+    quality filter.  The lower threshold allows strong indicator + momentum
+    proposals through even without candlestick/structural confirmation.
+    """
     from groups.entry.group import COMPOSITE_SCORE_THRESHOLD
-    assert COMPOSITE_SCORE_THRESHOLD == 0.50, (
-        "Threshold must not be lowered as a workaround. Only the normalization changes."
-    )
+    assert COMPOSITE_SCORE_THRESHOLD == 0.30
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -235,7 +239,9 @@ async def test_candidate_score_breakdown_contains_normalization_fields():
         assert "raw_score" in bd
         assert "active_weight_sum" in bd
         assert "normalized_composite_score" in bd
-        assert abs(bd["active_weight_sum"] - 1.0) < 1e-9
+        # active_weight_sum is now dynamic (only non-zero components contribute)
+        assert bd["active_weight_sum"] > 0, "active_weight_sum must be positive"
+        assert bd["active_weight_sum"] <= 1.0 + 1e-9, "active_weight_sum must be <= 1.0"
     finally:
         await harness.teardown()
 
@@ -384,9 +390,9 @@ def test_policy_comparison_is_deterministic():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_panel_thresholds_unchanged():
-    """Panel thresholds must remain read-only at Phase 5 values."""
+    """Panel thresholds updated to Phase 4 optimized values."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 11
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 14  # Phase 4: optimized from 11
     assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.8
 
 

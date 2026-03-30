@@ -266,7 +266,7 @@ class TestPhase64NoPolicyViolation:
     def test_panel_threshold_unchanged(self):
         from traders.panel import TraderEvaluatorPanel
         panel = TraderEvaluatorPanel()
-        assert panel.APPROVE_THRESHOLD == 11
+        assert panel.APPROVE_THRESHOLD == 14  # Phase 4 optimized
         assert panel.AVG_SCORE_THRESHOLD == 5.8
 
     def test_chart_pattern_group_is_wired_in_runner(self):

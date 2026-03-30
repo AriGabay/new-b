@@ -28,7 +28,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _make_mdp_state(
-    approve_count=12,
+    approve_count=15,
     reject_count=6,
     abstain_count=2,
     avg_score=6.5,
@@ -194,17 +194,17 @@ class TestMDPPolicyRules:
         self.policy = MDPPolicy()
 
     def test_r0_reduce_risk_streak(self):
-        """R0: triggered by streak <= -4."""
+        """R0: triggered by streak <= -8 (Phase 4: relaxed from -4)."""
         from mdp.actions import MDPAction
-        state = _make_mdp_state(current_streak=-5, drawdown_pct=0.05)
+        state = _make_mdp_state(current_streak=-9, drawdown_pct=0.05)
         action, reasoning = self.policy.decide(state)
         assert action == MDPAction.REDUCE_RISK
         assert reasoning["rule_number"] == 0
 
     def test_r0_reduce_risk_drawdown(self):
-        """R0: triggered by drawdown > 0.25."""
+        """R0: triggered by drawdown > 0.38 (Phase 4: relaxed from 0.25)."""
         from mdp.actions import MDPAction
-        state = _make_mdp_state(current_streak=0, drawdown_pct=0.30)
+        state = _make_mdp_state(current_streak=0, drawdown_pct=0.40)
         action, reasoning = self.policy.decide(state)
         assert action == MDPAction.REDUCE_RISK
         assert reasoning["rule_number"] == 0
@@ -213,7 +213,7 @@ class TestMDPPolicyRules:
         """R1: strong consensus + healthy account."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=15,
+            approve_count=18,  # Phase 4: HC_MIN_APPROVALS raised to 17
             avg_score=7.5,
             score_std_dev=1.0,
             drawdown_pct=0.05,
@@ -243,7 +243,7 @@ class TestMDPPolicyRules:
         """R2: standard qualifying entry."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=12,
+            approve_count=15,
             avg_score=6.5,
             r_r_ratio=2.5,
             drawdown_pct=0.05,
@@ -259,7 +259,7 @@ class TestMDPPolicyRules:
         """R2 requires r_r_ratio >= 2.0."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=12,
+            approve_count=15,
             avg_score=6.5,
             r_r_ratio=1.7,     # below threshold
             drawdown_pct=0.05,
@@ -273,7 +273,7 @@ class TestMDPPolicyRules:
         """R3: qualifying but high drawdown → ENTER_SMALL."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=12,
+            approve_count=15,
             avg_score=6.5,
             r_r_ratio=1.7,     # <2.0 so R2 doesn't fire
             drawdown_pct=0.15, # triggers R3
@@ -289,7 +289,7 @@ class TestMDPPolicyRules:
         """R3: qualifying but high volatility → ENTER_SMALL."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=12,
+            approve_count=15,
             avg_score=6.5,
             r_r_ratio=1.7,
             drawdown_pct=0.05,
@@ -304,7 +304,7 @@ class TestMDPPolicyRules:
         """R3: qualifying but loss streak -3 → ENTER_SMALL."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=12,
+            approve_count=15,
             avg_score=6.5,
             r_r_ratio=1.7,
             drawdown_pct=0.05,
@@ -319,7 +319,7 @@ class TestMDPPolicyRules:
         """R4: near threshold, promising — defer."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=9,       # >= 8 but < 11
+            approve_count=12,      # >= 11 but < 14 (DEFER range)
             avg_score=5.6,         # >= 5.5
             composite_score=0.68,  # >= 0.65
             score_std_dev=1.5,     # < 2.0
@@ -546,7 +546,7 @@ class TestSafetyRailOverride:
         low_panel = PanelResult(
             packet_id=packet.packet_id,
             verdicts=verdicts,
-            approve_count=12,
+            approve_count=15,
             reject_count=8,
             abstain_count=0,
             avg_score=4.0,  # below floor
@@ -1250,7 +1250,7 @@ class TestTradesLast24Bars:
                 )
                 for i in range(20)
             ],
-            approve_count=12, reject_count=8, abstain_count=0,
+            approve_count=15, reject_count=8, abstain_count=0,
             avg_score=6.5, weighted_score=6.5,
             panel_recommendation="enter", panel_confidence=0.60,
         )
@@ -1427,7 +1427,7 @@ class TestOutcomeAttribution:
     def test_to_vector_has_no_constant_slots(self):
         """to_vector() must not produce a vector with the same value for both
         the old macro constant slots regardless of what state is passed."""
-        state_a = _make_mdp_state(approve_count=12, avg_score=6.5)
+        state_a = _make_mdp_state(approve_count=15, avg_score=6.5)
         state_b = _make_mdp_state(approve_count=16, avg_score=8.0)
         vec_a = state_a.to_vector()
         vec_b = state_b.to_vector()

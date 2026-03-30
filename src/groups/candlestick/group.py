@@ -140,11 +140,16 @@ class CandlestickGroup(BaseGroup):
             current = bars[-1]
             prev = bars[-2]
 
-            # H2-001: Engulfing (requires structural)
+            # H2-001: Engulfing (with structural, or strong body without)
             if structural is not None:
                 eng_sig = self._detect_engulfing(symbol, current, prev, structural)
                 if eng_sig is not None:
                     signals.append(eng_sig)
+            # H2-006: Strong engulfing without S/R — body > 1.5× ATR14
+            if structural is None or not signals:
+                strong_eng = self._detect_strong_engulfing(symbol, current, prev)
+                if strong_eng is not None:
+                    signals.append(strong_eng)
 
             # H2-004: Inverted Hammer — BEARISH (requires structural)
             if structural is not None:
@@ -219,7 +224,7 @@ class CandlestickGroup(BaseGroup):
         Current bar's body must completely engulf the prior bar's body.
         """
         # RJ-009: block in choppy/ranging market
-        if current.adx14 < 20:
+        if current.adx14 < 15:
             return None
 
         prev_bearish = prev.open > prev.close
@@ -320,6 +325,109 @@ class CandlestickGroup(BaseGroup):
         return None
 
     # ------------------------------------------------------------------
+    # H2-006: Strong Engulfing (no S/R required — body > 1.5× ATR14)
+    # ------------------------------------------------------------------
+
+    def _detect_strong_engulfing(
+        self,
+        symbol: str,
+        current: FeatureVector,
+        prev: FeatureVector,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-006: Strong engulfing without S/R requirement.
+
+        Fires when the engulfing body is > 1.5× ATR14 — these large candles
+        represent significant momentum and don't need S/R context to be valid.
+        Quality score slightly lower (0.60) since no structural confirmation.
+        """
+        if current.adx14 < 15:
+            return None
+
+        prev_bearish = prev.open > prev.close
+        prev_bullish = prev.open < prev.close
+        curr_bullish = current.close > current.open
+        curr_bearish = current.close < current.open
+
+        # Body size relative to ATR
+        body = current.candle_body
+        atr = current.atr14
+        if atr <= Decimal("0") or body <= Decimal("0"):
+            return None
+
+        body_atr_ratio = float(body / atr)
+        if body_atr_ratio < 1.5:
+            return None  # Not strong enough without S/R
+
+        # Bullish strong engulfing
+        if (
+            prev_bearish
+            and curr_bullish
+            and current.open <= prev.close
+            and current.close >= prev.open
+        ):
+            return CandlestickSignal(
+                group_id=self.group_id.value,
+                symbol=symbol,
+                timeframe=current.timeframe,
+                timestamp=current.timestamp,
+                direction=Direction.LONG,
+                signal_type="candlestick",
+                signal_subtype="strong_bullish_engulfing",
+                hypothesis_ref="H2-006",
+                quality_score=0.60,
+                requires_structural_level=False,
+                context_confirmed=True,
+                confirmation_required=False,
+                confirmed_on_bar_close=True,
+                pattern_name="strong_bullish_engulfing",
+                bars_consumed=2,
+                nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={
+                    "body_atr_ratio": round(body_atr_ratio, 2),
+                    "body": float(body),
+                    "atr14": float(atr),
+                    "adx14": current.adx14,
+                },
+            )
+
+        # Bearish strong engulfing
+        if (
+            prev_bullish
+            and curr_bearish
+            and current.open >= prev.close
+            and current.close <= prev.open
+        ):
+            return CandlestickSignal(
+                group_id=self.group_id.value,
+                symbol=symbol,
+                timeframe=current.timeframe,
+                timestamp=current.timestamp,
+                direction=Direction.SHORT,
+                signal_type="candlestick",
+                signal_subtype="strong_bearish_engulfing",
+                hypothesis_ref="H2-006",
+                quality_score=0.60,
+                requires_structural_level=False,
+                context_confirmed=True,
+                confirmation_required=False,
+                confirmed_on_bar_close=True,
+                pattern_name="strong_bearish_engulfing",
+                bars_consumed=2,
+                nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={
+                    "body_atr_ratio": round(body_atr_ratio, 2),
+                    "body": float(body),
+                    "atr14": float(atr),
+                    "adx14": current.adx14,
+                },
+            )
+
+        return None
+
+    # ------------------------------------------------------------------
     # H2-002: Morning Star / Evening Star
     # ------------------------------------------------------------------
 
@@ -341,7 +449,7 @@ class CandlestickGroup(BaseGroup):
         b0, b1, b2 = bars[0], bars[1], bars[2]
 
         # RJ-009: block in choppy/ranging market
-        if b2.adx14 < 20:
+        if b2.adx14 < 15:
             return None
 
         b0_bullish = b0.close > b0.open
@@ -468,7 +576,7 @@ class CandlestickGroup(BaseGroup):
         b0, b1, b2 = bars[0], bars[1], bars[2]
 
         # RJ-009: block in choppy/ranging market
-        if b2.adx14 < 20:
+        if b2.adx14 < 15:
             return None
 
         # All 3 must be bearish (close < open)
@@ -535,7 +643,7 @@ class CandlestickGroup(BaseGroup):
         Rejected as bullish signal per RJ-010.
         """
         # RJ-009: block in choppy/ranging market
-        if current.adx14 < 20:
+        if current.adx14 < 15:
             return None
 
         # Requires uptrend context
@@ -629,7 +737,7 @@ class CandlestickGroup(BaseGroup):
             return None
 
         # RJ-009: block in choppy/ranging market
-        if b2.adx14 < 20:
+        if b2.adx14 < 15:
             return None
 
         # Prior 2 bars (b0 and b1) must be same direction

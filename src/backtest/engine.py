@@ -437,6 +437,8 @@ class BacktestEngine:
                 computer = FeatureComputer()
                 total_symbol_bars = len(bar_list)
 
+                prev_day = None  # Track day boundaries for PnL reset
+
                 for i, _bar in enumerate(bar_list):
                     # Fixed 200-bar lookback window (avoids O(n²) growing-buffer cost)
                     if i < 199:
@@ -446,6 +448,15 @@ class BacktestEngine:
                     fv = computer.compute(window)
                     if fv is None:
                         continue
+
+                    # Reset daily PnL at day boundaries (critical for daily loss limit)
+                    bar_day = _bar.timestamp.date()
+                    if prev_day is not None and bar_day != prev_day:
+                        await runner._state.reset_daily_pnl()
+                        # Also reset weekly PnL on Monday
+                        if bar_day.weekday() == 0:  # Monday
+                            await runner._state.reset_weekly_pnl()
+                    prev_day = bar_day
 
                     await runner.simulate_bar(fv)
                     bars_processed += 1

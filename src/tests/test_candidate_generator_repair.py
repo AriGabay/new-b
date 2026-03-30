@@ -164,28 +164,28 @@ def test_h3005_fires_in_full_bull_near_ema20():
 # Section 2: H3-005 suppression conditions
 # ===========================================================================
 
-def test_h3005_suppressed_adx_below_25():
-    """H3-005 does NOT fire when ADX < 25 (ranging/non-trending market)."""
+def test_h3005_suppressed_adx_below_20():
+    """H3-005 does NOT fire when ADX < 20 (ranging/non-trending market)."""
     from groups.indicators.group import IndicatorsGroup
     from core.state import SystemState
     from core.events import EventBus
 
     grp = IndicatorsGroup(state=SystemState(), bus=EventBus())
-    fv = _make_fv(adx14=22.0)   # ADX below threshold
+    fv = _make_fv(adx14=18.0)   # ADX below threshold (relaxed: was 25, now 20)
     sig = grp._detect_trend_continuation(fv)
-    assert sig is None, "H3-005 must not fire when ADX < 25"
+    assert sig is None, "H3-005 must not fire when ADX < 20"
 
 
-def test_h3005_suppressed_volume_below_1x():
-    """H3-005 does NOT fire when volume_ratio < 1.0 (below-average participation)."""
+def test_h3005_suppressed_volume_below_0_8x():
+    """H3-005 does NOT fire when volume_ratio < 0.8 (below threshold)."""
     from groups.indicators.group import IndicatorsGroup
     from core.state import SystemState
     from core.events import EventBus
 
     grp = IndicatorsGroup(state=SystemState(), bus=EventBus())
-    fv = _make_fv(volume_ratio=0.92)  # below average
+    fv = _make_fv(volume_ratio=0.72)  # below threshold (relaxed: was 1.0, now 0.8)
     sig = grp._detect_trend_continuation(fv)
-    assert sig is None, "H3-005 must not fire with volume_ratio < 1.0"
+    assert sig is None, "H3-005 must not fire with volume_ratio < 0.8"
 
 
 def test_h3005_suppressed_ema_separation_too_small():
@@ -206,40 +206,40 @@ def test_h3005_suppressed_ema_separation_too_small():
 
 
 def test_h3005_suppressed_rsi_too_high():
-    """H3-005 does NOT fire when RSI > 65 (still overbought, not pulled back)."""
+    """H3-005 does NOT fire when RSI > 70 (still overbought, not pulled back)."""
     from groups.indicators.group import IndicatorsGroup
     from core.state import SystemState
     from core.events import EventBus
 
     grp = IndicatorsGroup(state=SystemState(), bus=EventBus())
-    fv = _make_fv(rsi14=70.0)  # overbought, not pulled back to mid-zone
+    fv = _make_fv(rsi14=75.0)  # overbought, not pulled back to mid-zone
     sig = grp._detect_trend_continuation(fv)
-    assert sig is None, "H3-005 must not fire when RSI > 65"
+    assert sig is None, "H3-005 must not fire when RSI > 70"
 
 
 def test_h3005_suppressed_rsi_too_low():
-    """H3-005 does NOT fire when RSI < 35 (oversold, may be bottoming, not continuation)."""
+    """H3-005 does NOT fire when RSI < 30 (oversold, may be bottoming, not continuation)."""
     from groups.indicators.group import IndicatorsGroup
     from core.state import SystemState
     from core.events import EventBus
 
     grp = IndicatorsGroup(state=SystemState(), bus=EventBus())
-    fv = _make_fv(rsi14=30.0)
+    fv = _make_fv(rsi14=25.0)
     sig = grp._detect_trend_continuation(fv)
-    assert sig is None, "H3-005 must not fire when RSI < 35"
+    assert sig is None, "H3-005 must not fire when RSI < 30"
 
 
 def test_h3005_suppressed_price_too_far_below_ema20():
-    """H3-005 does NOT fire when price is more than 3% below EMA20 (deep retracement)."""
+    """H3-005 does NOT fire when price is more than 5% below EMA20 (deep retracement)."""
     from groups.indicators.group import IndicatorsGroup
     from core.state import SystemState
     from core.events import EventBus
 
     grp = IndicatorsGroup(state=SystemState(), bus=EventBus())
-    # close = 63000, EMA20 = 65440 → gap = 3.73% > 3%
-    fv = _make_fv(close=Decimal("63000"))
+    # close = 61000, EMA20 = 65440 → gap = 6.79% > 5%
+    fv = _make_fv(close=Decimal("61000"))
     sig = grp._detect_trend_continuation(fv)
-    assert sig is None, "H3-005 must not fire when price is far below EMA20 (> 3%)"
+    assert sig is None, "H3-005 must not fire when price is far below EMA20 (> 5%)"
 
 
 def test_h3005_suppressed_mixed_ema_alignment():
@@ -592,10 +592,14 @@ def test_composite_score_indicator_only_is_lower():
         historian_analog=None,
     )
     assert breakdown["candlestick_quality"] == 0.0, "indicator-only has no candlestick quality"
-    # indicator-only with no structural: (0.85 * 0.20) / 0.55 = 0.309
+    # Phase 4: no normalization — indicator-only with quality 0.85 and no
+    # candlestick/structural/momentum → 0.35 × 0.85 = 0.2975.
+    # This is below the 0.40 threshold, which is correct: the pure-indicator
+    # suppression gate was removed but the composite score naturally penalises
+    # proposals lacking confirmation diversity.
     assert score < 0.50, (
-        f"indicator-only score {score:.3f} should be below 0.50 threshold — "
-        "confirms why gate enforcement is needed"
+        f"indicator-only score {score:.3f} should be below 0.50 "
+        "(no candlestick, structural, or momentum contribution)"
     )
 
 

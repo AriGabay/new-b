@@ -1,0 +1,38 @@
+{
+  "iter": 7,
+  "label": "approve=15, Rail6=16 (sweep sweet spot)",
+  "metrics": {
+    "trades": 22,
+    "tpw": 0.2,
+    "wr": 0.6818,
+    "pf": 1.85,
+    "dd": 0.0775,
+    "pnl": 163.17,
+    "aw": 23.61,
+    "al": -27.28,
+    "ret": 16.32
+  },
+  "patches": {
+    "eg_CONFIRMATION_GATE_MIN_GROUPS": 1,
+    "eg_COMPOSITE_SCORE_THRESHOLD": 0.3,
+    "eg_SINGLE_SIGNAL_HIGH_CONFIDENCE": 0.5,
+    "eg_CRITIC_SCORE_THRESHOLD": 0.4,
+    "APPROVE_THRESHOLD": 15,
+    "MIN_AVG_SCORE": 5.8,
+    "RAIL6_THRESHOLD": 16,
+    "pol_HC_MIN_APPROVALS": 18,
+    "pol_HC_MIN_AVG_SCORE": 7.0,
+    "pol_HC_MAX_STD_DEV": 1.5,
+    "pol_HC_MAX_DRAWDOWN": 0.15,
+    "pol_HC_MIN_WIN_RATE": 0.48,
+    "pol_MED_MIN_APPROVALS": 15,
+    "pol_MED_MIN_AVG_SCORE": 5.8,
+    "pol_MED_MIN_RR": 1.5,
+    "pol_SMALL_MIN_APPROVALS": 15,
+    "pol_SMALL_MIN_AVG_SCORE": 5.8,
+    "pol_DEFER_MIN_APPROVALS": 12,
+    "pol_DEFER_MIN_AVG_SCORE": 5.5,
+    "pol_REDUCE_MAX_DRAWDOWN": 0.38,
+    "pol_REDUCE_MAX_STREAK": -10
+  }
+}
