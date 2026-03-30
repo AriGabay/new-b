@@ -29,21 +29,27 @@ from mdp.actions import MDPAction
 logger = logging.getLogger(__name__)
 
 # Rule thresholds (named constants for auditability)
-# Phase 4: thresholds aligned with panel APPROVE_THRESHOLD=14
-HC_MIN_APPROVALS    = 17    # threshold + 3 (capped at 20)
+# Phase 4→11B: regime-adaptive thresholds
+# Bull/trending: relaxed (T=12) — trend continuation signals are more reliable
+# Bear/ranging: strict (T=15) — choppy markets require stronger consensus
+_REGIME_THRESHOLDS = {
+    "bull":    {"base": 12, "hc_offset": 3, "defer_offset": -3},
+    "trending": {"base": 12, "hc_offset": 3, "defer_offset": -3},
+    "ranging": {"base": 14, "hc_offset": 3, "defer_offset": -3},
+    "bear":    {"base": 15, "hc_offset": 3, "defer_offset": -3},
+}
+_DEFAULT_REGIME = {"base": 14, "hc_offset": 3, "defer_offset": -3}
+
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5
 HC_MAX_DRAWDOWN     = 0.10
 HC_MIN_WIN_RATE     = 0.50
 
-MED_MIN_APPROVALS   = 14    # = panel threshold
 MED_MIN_AVG_SCORE   = 5.8
 MED_MIN_RR          = 2.0
 
-SMALL_MIN_APPROVALS = 14    # = panel threshold
 SMALL_MIN_AVG_SCORE = 5.8
 
-DEFER_MIN_APPROVALS = 11    # threshold - 3
 DEFER_MIN_AVG_SCORE = 5.5
 DEFER_MIN_COMPOSITE = 0.65
 DEFER_MAX_STD_DEV   = 2.0
@@ -69,6 +75,23 @@ class MDPPolicy:
     decide(state) → (action, reasoning).
     """
 
+    def _get_regime_thresholds(self, state: MDPState) -> dict:
+        """Return approval thresholds adapted to current market regime."""
+        regime = getattr(state, "btc_macro", "ranging")
+        rt = _REGIME_THRESHOLDS.get(regime, _DEFAULT_REGIME)
+        # Also check trending flag — trending overrides ranging
+        if getattr(state, "trending", False) and regime == "ranging":
+            rt = _REGIME_THRESHOLDS["trending"]
+        base = rt["base"]
+        return {
+            "hc_min_approvals": min(20, base + rt["hc_offset"]),
+            "med_min_approvals": base,
+            "small_min_approvals": base,
+            "defer_min_approvals": max(8, base + rt["defer_offset"]),
+            "regime": regime,
+            "base_threshold": base,
+        }
+
     def decide(self, state: MDPState) -> tuple[MDPAction, dict]:
         """
         Evaluate rules in priority order. Returns (action, reasoning).
@@ -79,6 +102,15 @@ class MDPPolicy:
           factors: dict         — relevant state values that drove the decision
           size_multiplier: float — position size modifier
         """
+        # Regime-adaptive thresholds
+        rt = self._get_regime_thresholds(state)
+        logger.info(
+            "MDPPolicy: regime=%s base_threshold=%d (HC=%d MED=%d SMALL=%d DEFER=%d)",
+            rt["regime"], rt["base_threshold"],
+            rt["hc_min_approvals"], rt["med_min_approvals"],
+            rt["small_min_approvals"], rt["defer_min_approvals"],
+        )
+
         # ------------------------------------------------------------------
         # R0: Portfolio protection — always evaluated first
         # ------------------------------------------------------------------
@@ -104,7 +136,7 @@ class MDPPolicy:
         # R1: High conviction — strong consensus + healthy account
         # ------------------------------------------------------------------
         if (
-            state.approve_count >= HC_MIN_APPROVALS
+            state.approve_count >= rt["hc_min_approvals"]
             and state.avg_score >= HC_MIN_AVG_SCORE
             and state.score_std_dev < HC_MAX_STD_DEV
             and state.drawdown_pct < HC_MAX_DRAWDOWN
@@ -132,7 +164,7 @@ class MDPPolicy:
         # R2: Standard entry — qualifying consensus + adequate R:R
         # ------------------------------------------------------------------
         if (
-            state.approve_count >= MED_MIN_APPROVALS
+            state.approve_count >= rt["med_min_approvals"]
             and state.avg_score >= MED_MIN_AVG_SCORE
             and state.r_r_ratio >= MED_MIN_RR
         ):
@@ -161,7 +193,7 @@ class MDPPolicy:
             or state.volatility_regime == "high"
         )
         if (
-            state.approve_count >= SMALL_MIN_APPROVALS
+            state.approve_count >= rt["small_min_approvals"]
             and state.avg_score >= SMALL_MIN_AVG_SCORE
             and risk_factor_triggered
         ):
@@ -193,7 +225,7 @@ class MDPPolicy:
         # R4: Defer — promising setup, near threshold; wait one bar
         # ------------------------------------------------------------------
         if (
-            state.approve_count >= DEFER_MIN_APPROVALS
+            state.approve_count >= rt["defer_min_approvals"]
             and state.avg_score >= DEFER_MIN_AVG_SCORE
             and state.composite_score >= DEFER_MIN_COMPOSITE
             and state.score_std_dev < DEFER_MAX_STD_DEV

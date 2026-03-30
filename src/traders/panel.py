@@ -65,9 +65,12 @@ class TraderEvaluatorPanel:
     Hard reject: < 8 approve → "hold" (force no trade)
     """
 
-    APPROVE_THRESHOLD = 14   # need 14/20 to enter (optimized from 11 in Phase 4)
+    APPROVE_THRESHOLD = 14   # default (overridden by regime-adaptive logic)
     MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
     AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
+
+    # Regime-adaptive thresholds (aligned with mdp/policy.py)
+    _REGIME_THRESHOLDS = {"bull": 12, "trending": 12, "ranging": 14, "bear": 15}
 
     def __init__(self) -> None:
         self._evaluators = [
@@ -132,9 +135,14 @@ class TraderEvaluatorPanel:
                 if v.vote == "approve"
             ][:5]
 
-        # Panel decision
+        # Panel decision (regime-adaptive threshold)
+        regime_str = getattr(getattr(packet, "regime", None), "btc_macro", "ranging")
+        approve_threshold = self._REGIME_THRESHOLDS.get(regime_str, self.APPROVE_THRESHOLD)
+        logger.info(
+            "Panel threshold: %d (regime=%s)", approve_threshold, regime_str,
+        )
         if (
-            result.approve_count >= self.APPROVE_THRESHOLD
+            result.approve_count >= approve_threshold
             and result.avg_score >= self.MIN_AVG_SCORE
         ):
             result.panel_recommendation = "enter"
