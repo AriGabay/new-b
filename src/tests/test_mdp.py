@@ -29,7 +29,7 @@ import pytest
 
 def _make_mdp_state(
     approve_count=15,
-    reject_count=6,
+    reject_count=4,
     abstain_count=2,
     avg_score=6.5,
     weighted_score=6.5,
@@ -213,7 +213,7 @@ class TestMDPPolicyRules:
         """R1: strong consensus + healthy account."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=18,  # Phase 4: HC_MIN_APPROVALS raised to 17
+            approve_count=19,  # Phase 5: HC_MIN_APPROVALS raised to 18
             avg_score=7.5,
             score_std_dev=1.0,
             drawdown_pct=0.05,
@@ -319,7 +319,7 @@ class TestMDPPolicyRules:
         """R4: near threshold, promising — defer."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
-            approve_count=12,      # >= 11 but < 14 (DEFER range)
+            approve_count=13,      # >= 12 but < 15 (DEFER range)
             avg_score=5.6,         # >= 5.5
             composite_score=0.68,  # >= 0.65
             score_std_dev=1.5,     # < 2.0
@@ -463,10 +463,10 @@ class TestSafetyRailOverride:
             ),
         )
 
-        # Panel with 14/20 approvals
+        # Panel with 16/20 approvals (above T=15 threshold)
         verdicts = []
         for i in range(20):
-            vote = "approve" if i < 14 else "reject"
+            vote = "approve" if i < 16 else "reject"
             verdicts.append(TraderVerdict(
                 trader_id=f"Trader{i}",
                 score=7.0 if vote == "approve" else 4.0,
@@ -482,8 +482,8 @@ class TestSafetyRailOverride:
         panel = PanelResult(
             packet_id=packet.packet_id,
             verdicts=verdicts,
-            approve_count=14,
-            reject_count=6,
+            approve_count=16,
+            reject_count=4,
             abstain_count=0,
             avg_score=6.3,
             weighted_score=6.3,
@@ -839,8 +839,8 @@ class TestMDPStateBuilder:
         panel = PanelResult(
             packet_id=packet.packet_id,
             verdicts=verdicts,
-            approve_count=14,
-            reject_count=6,
+            approve_count=16,
+            reject_count=4,
             abstain_count=0,
             avg_score=6.3,
             weighted_score=6.3,
@@ -1001,8 +1001,8 @@ class TestFinalDecisionGroupMDP:
         panel = PanelResult(
             packet_id=packet.packet_id,
             verdicts=verdicts,
-            approve_count=14,
-            reject_count=6,
+            approve_count=16,
+            reject_count=4,
             abstain_count=0,
             avg_score=6.3,
             weighted_score=6.3,

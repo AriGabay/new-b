@@ -392,7 +392,7 @@ def test_policy_comparison_is_deterministic():
 def test_panel_thresholds_unchanged():
     """Panel thresholds updated to Phase 4 optimized values."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 14  # Phase 4: optimized from 11
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 15  # Phase 4: optimized from 11
     assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.8
 
 

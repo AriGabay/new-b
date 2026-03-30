@@ -43,11 +43,11 @@ from traders.panel import PanelResult
 logger = logging.getLogger(__name__)
 
 # Panel approval threshold constant (referenced by hold-rationale text)
-_PANEL_APPROVE_THRESHOLD = 14  # Phase 4: aligned with panel.APPROVE_THRESHOLD
+_PANEL_APPROVE_THRESHOLD = 15  # Phase 5: aligned with panel.APPROVE_THRESHOLD
 
 # Rail 6: high-volatility requires this many approvals (default: 14)
 # Made configurable so backtest sweeps can test different values.
-_RAIL6_HIGH_VOL_THRESHOLD = 17  # Phase 4: panel_threshold + 3 = 14 + 3
+_RAIL6_HIGH_VOL_THRESHOLD = 18  # Phase 5: panel_threshold + 3 = 15 + 3
 
 
 @dataclass

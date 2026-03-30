@@ -29,21 +29,21 @@ from mdp.actions import MDPAction
 logger = logging.getLogger(__name__)
 
 # Rule thresholds (named constants for auditability)
-# Phase 4: thresholds aligned with panel APPROVE_THRESHOLD=14
-HC_MIN_APPROVALS    = 17    # threshold + 3 (capped at 20)
+# Phase 5: thresholds aligned with panel APPROVE_THRESHOLD=15
+HC_MIN_APPROVALS    = 18    # threshold + 3 (capped at 20)
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5
 HC_MAX_DRAWDOWN     = 0.10
 HC_MIN_WIN_RATE     = 0.50
 
-MED_MIN_APPROVALS   = 14    # = panel threshold
+MED_MIN_APPROVALS   = 15    # = panel threshold
 MED_MIN_AVG_SCORE   = 5.8
 MED_MIN_RR          = 2.0
 
-SMALL_MIN_APPROVALS = 14    # = panel threshold
+SMALL_MIN_APPROVALS = 15    # = panel threshold
 SMALL_MIN_AVG_SCORE = 5.8
 
-DEFER_MIN_APPROVALS = 11    # threshold - 3
+DEFER_MIN_APPROVALS = 12    # threshold - 3
 DEFER_MIN_AVG_SCORE = 5.5
 DEFER_MIN_COMPOSITE = 0.65
 DEFER_MAX_STD_DEV   = 2.0

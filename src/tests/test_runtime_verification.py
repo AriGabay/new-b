@@ -427,20 +427,20 @@ async def test_panel_approved_reaches_risk():
     runner._market_data._feature_cache[("BTCUSDT", "1h")] = fv
     await runner._state.update_last_close("BTCUSDT", fv.close)
 
-    # Force panel to approve (14/20, avg_score=7.0)
+    # Force panel to approve (16/20, avg_score=7.0) — above T=15 threshold
     original_panel_evaluate = runner._panel_decision._panel.evaluate
     def force_approve_panel(packet):
         result = PanelResult(packet_id=packet.packet_id)
-        result.approve_count = 14
-        result.reject_count = 3
-        result.abstain_count = 3
+        result.approve_count = 16
+        result.reject_count = 2
+        result.abstain_count = 2
         result.avg_score = 7.0
         result.panel_recommendation = "enter"
         result.panel_confidence = 0.70
         # Populate 20 minimal verdicts so trace logger doesn't fail
         from traders.evaluators import TraderVerdict
         for i in range(20):
-            vote = "approve" if i < 14 else ("reject" if i < 17 else "abstain")
+            vote = "approve" if i < 16 else ("reject" if i < 18 else "abstain")
             result.verdicts.append(TraderVerdict(
                 trader_id=f"trader_{i}",
                 vote=vote,
@@ -584,14 +584,14 @@ def _make_force_approve_panel():
 
     def force_approve(packet):
         result = PanelResult(packet_id=packet.packet_id)
-        result.approve_count = 14
-        result.reject_count = 3
-        result.abstain_count = 3
+        result.approve_count = 16
+        result.reject_count = 2
+        result.abstain_count = 2
         result.avg_score = 7.0
         result.panel_recommendation = "enter"
         result.panel_confidence = 0.70
         for i in range(20):
-            vote = "approve" if i < 14 else ("reject" if i < 17 else "abstain")
+            vote = "approve" if i < 16 else ("reject" if i < 18 else "abstain")
             result.verdicts.append(TraderVerdict(
                 trader_id=f"trader_{i}",
                 vote=vote,

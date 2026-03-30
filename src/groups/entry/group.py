@@ -226,7 +226,13 @@ class EntryGroup(BaseGroup):
         # ------------------------------------------------------------------
         all_signals = []
         for b in bundles.values():
-            all_signals.extend(b.signals)
+            for s in b.signals:
+                # Phase 5: exclude chart_pattern signals from direction voting.
+                # Chart patterns fire in both directions and conflict with indicator
+                # direction, causing false suppression.  They still contribute to
+                # has_bar_level_confirmation and composite score via the bundles.
+                if getattr(s, "signal_type", "") != "chart_pattern":
+                    all_signals.append(s)
 
         # ------------------------------------------------------------------
         # 2. Extract regime (use first bundle that carries one; fall back safe)

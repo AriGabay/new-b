@@ -65,7 +65,7 @@ class TraderEvaluatorPanel:
     Hard reject: < 8 approve → "hold" (force no trade)
     """
 
-    APPROVE_THRESHOLD = 14   # need 14/20 to enter (optimized from 11 in Phase 4)
+    APPROVE_THRESHOLD = 15   # need 15/20 to enter (optimized in Phase 5)
     MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
     AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
 
