@@ -42,12 +42,16 @@ from traders.panel import PanelResult
 
 logger = logging.getLogger(__name__)
 
-# Panel approval threshold constant (referenced by hold-rationale text)
-_PANEL_APPROVE_THRESHOLD = 15  # Phase 5: aligned with panel.APPROVE_THRESHOLD
+# Panel approval threshold constant (default fallback, referenced by hold-rationale text)
+_PANEL_APPROVE_THRESHOLD = 14  # default fallback
 
-# Rail 6: high-volatility requires this many approvals (default: 14)
-# Made configurable so backtest sweeps can test different values.
-_RAIL6_HIGH_VOL_THRESHOLD = 18  # Phase 5: panel_threshold + 3 = 15 + 3
+# Phase 11B: regime-adaptive base thresholds
+_REGIME_BASE_THRESHOLDS = {
+    "bull": 12, "trending": 12, "ranging": 14, "bear": 15,
+}
+
+# Rail 6: high-volatility adds this offset on top of regime base threshold
+_RAIL6_HIGH_VOL_OFFSET = 3
 
 
 @dataclass
@@ -199,8 +203,9 @@ class FinalDecisionGroup:
         if regime.btc_macro == "bear" and direction_value == "long":
             rails_triggered.append("long trade in bear regime blocked")
 
-        # Rail 6: high volatility requires stronger consensus
-        _r6_thresh = _RAIL6_HIGH_VOL_THRESHOLD
+        # Rail 6: high volatility requires stronger consensus (regime-adaptive)
+        _base_thresh = _REGIME_BASE_THRESHOLDS.get(regime.btc_macro, _PANEL_APPROVE_THRESHOLD)
+        _r6_thresh = min(20, _base_thresh + _RAIL6_HIGH_VOL_OFFSET)
         if regime.volatility_regime == "high" and panel.approve_count < _r6_thresh:
             rails_triggered.append(
                 f"high volatility requires {_r6_thresh} approves (got {panel.approve_count})"
@@ -332,7 +337,8 @@ class FinalDecisionGroup:
         )
         if regime.btc_macro == "bear" and direction_value == "long":
             rails_triggered.append("long trade in bear regime blocked")
-        _r6_thresh = _RAIL6_HIGH_VOL_THRESHOLD
+        _base_thresh = _REGIME_BASE_THRESHOLDS.get(regime.btc_macro, _PANEL_APPROVE_THRESHOLD)
+        _r6_thresh = min(20, _base_thresh + _RAIL6_HIGH_VOL_OFFSET)
         if regime.volatility_regime == "high" and panel.approve_count < _r6_thresh:
             rails_triggered.append(
                 f"high volatility requires {_r6_thresh} approves (got {panel.approve_count})"
