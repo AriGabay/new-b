@@ -69,6 +69,8 @@ class TraderEvaluatorPanel:
     MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
     AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
     _REGIME_THRESHOLDS = {"bull": 14, "trending": 14, "ranging": 15, "bear": 15}
+    # Task 11H: non-BTC symbols require tighter consensus (panel calibrated on BTC)
+    _SYMBOL_THRESHOLD_OFFSET: dict = {"ETHUSDT": 1, "BNBUSDT": 1}
 
     def __init__(self) -> None:
         self._evaluators = [
@@ -133,10 +135,17 @@ class TraderEvaluatorPanel:
                 if v.vote == "approve"
             ][:5]
 
-        # Panel decision (regime-adaptive threshold)
+        # Panel decision (regime-adaptive threshold + symbol offset)
         regime_str = getattr(getattr(packet, "regime", None), "btc_macro", "ranging")
-        approve_threshold = self._REGIME_THRESHOLDS.get(regime_str, self.APPROVE_THRESHOLD)
-        logger.info("Panel threshold: %d (regime=%s)", approve_threshold, regime_str)
+        symbol_str = getattr(packet, "symbol", "BTCUSDT")
+        sym_offset = self._SYMBOL_THRESHOLD_OFFSET.get(symbol_str, 0)
+        approve_threshold = (
+            self._REGIME_THRESHOLDS.get(regime_str, self.APPROVE_THRESHOLD) + sym_offset
+        )
+        logger.info(
+            "Panel threshold: %d (regime=%s symbol=%s offset=%d)",
+            approve_threshold, regime_str, symbol_str, sym_offset,
+        )
         if (
             result.approve_count >= approve_threshold
             and result.avg_score >= self.MIN_AVG_SCORE

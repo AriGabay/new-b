@@ -53,6 +53,9 @@ _REGIME_BASE_THRESHOLDS = {
 # Rail 6: high-volatility adds this offset on top of regime base threshold
 _RAIL6_HIGH_VOL_OFFSET = 3
 
+# Task 11H: non-BTC symbols require tighter consensus (panel calibrated on BTC)
+_SYMBOL_THRESHOLD_OFFSET: dict[str, int] = {"ETHUSDT": 1, "BNBUSDT": 1}
+
 
 @dataclass
 class SafetyRailResult:
@@ -203,9 +206,10 @@ class FinalDecisionGroup:
         if regime.btc_macro == "bear" and direction_value == "long":
             rails_triggered.append("long trade in bear regime blocked")
 
-        # Rail 6: high volatility requires stronger consensus (regime-adaptive)
+        # Rail 6: high volatility requires stronger consensus (regime-adaptive + symbol offset)
+        _sym_offset = _SYMBOL_THRESHOLD_OFFSET.get(getattr(proposal, "symbol", "BTCUSDT"), 0)
         _base_thresh = _REGIME_BASE_THRESHOLDS.get(regime.btc_macro, _PANEL_APPROVE_THRESHOLD)
-        _r6_thresh = min(20, _base_thresh + _RAIL6_HIGH_VOL_OFFSET)
+        _r6_thresh = min(20, _base_thresh + _RAIL6_HIGH_VOL_OFFSET + _sym_offset)
         if regime.volatility_regime == "high" and panel.approve_count < _r6_thresh:
             rails_triggered.append(
                 f"high volatility requires {_r6_thresh} approves (got {panel.approve_count})"
@@ -337,8 +341,9 @@ class FinalDecisionGroup:
         )
         if regime.btc_macro == "bear" and direction_value == "long":
             rails_triggered.append("long trade in bear regime blocked")
+        _sym_offset = _SYMBOL_THRESHOLD_OFFSET.get(getattr(proposal, "symbol", "BTCUSDT"), 0)
         _base_thresh = _REGIME_BASE_THRESHOLDS.get(regime.btc_macro, _PANEL_APPROVE_THRESHOLD)
-        _r6_thresh = min(20, _base_thresh + _RAIL6_HIGH_VOL_OFFSET)
+        _r6_thresh = min(20, _base_thresh + _RAIL6_HIGH_VOL_OFFSET + _sym_offset)
         if regime.volatility_regime == "high" and panel.approve_count < _r6_thresh:
             rails_triggered.append(
                 f"high volatility requires {_r6_thresh} approves (got {panel.approve_count})"

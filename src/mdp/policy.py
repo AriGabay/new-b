@@ -38,6 +38,9 @@ _REGIME_THRESHOLDS = {
 }
 _DEFAULT_REGIME = {"base": 15, "hc_offset": 3, "defer_offset": -3}
 
+# Task 11H: non-BTC symbols need tighter consensus (panel calibrated on BTC)
+_SYMBOL_THRESHOLD_OFFSET: dict[str, int] = {"ETHUSDT": 1, "BNBUSDT": 1}
+
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5
 HC_MAX_DRAWDOWN     = 0.10
@@ -74,12 +77,19 @@ class MDPPolicy:
     """
 
     def _get_regime_thresholds(self, state: MDPState) -> dict:
-        """Return per-regime approval thresholds derived from state.btc_macro."""
+        """Return per-regime approval thresholds derived from state.btc_macro.
+
+        Non-BTC symbols (ETH, BNB) receive +1 on all thresholds because the
+        panel was calibrated on BTC price action (Task 11H).
+        """
         regime = getattr(state, "btc_macro", "ranging")
         rt = _REGIME_THRESHOLDS.get(regime, _DEFAULT_REGIME)
         if getattr(state, "trending", False) and regime == "ranging":
             rt = _REGIME_THRESHOLDS["trending"]
-        base = rt["base"]
+        symbol_offset = _SYMBOL_THRESHOLD_OFFSET.get(
+            getattr(state, "symbol", "BTCUSDT"), 0
+        )
+        base = rt["base"] + symbol_offset
         return {
             "hc_min_approvals":    min(20, base + rt["hc_offset"]),
             "med_min_approvals":   base,
@@ -87,6 +97,7 @@ class MDPPolicy:
             "defer_min_approvals": max(8, base + rt["defer_offset"]),
             "regime":              regime,
             "base_threshold":      base,
+            "symbol_offset":       symbol_offset,
         }
 
     def decide(self, state: MDPState) -> tuple[MDPAction, dict]:
@@ -101,8 +112,10 @@ class MDPPolicy:
         """
         rt = self._get_regime_thresholds(state)
         logger.info(
-            "MDPPolicy: regime=%s base_threshold=%d (HC=%d MED=%d SMALL=%d DEFER=%d)",
-            rt["regime"], rt["base_threshold"],
+            "MDPPolicy: regime=%s symbol=%s base_threshold=%d offset=%d "
+            "(HC=%d MED=%d SMALL=%d DEFER=%d)",
+            rt["regime"], getattr(state, "symbol", "BTCUSDT"),
+            rt["base_threshold"], rt.get("symbol_offset", 0),
             rt["hc_min_approvals"], rt["med_min_approvals"],
             rt["small_min_approvals"], rt["defer_min_approvals"],
         )
