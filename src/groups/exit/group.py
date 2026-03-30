@@ -62,13 +62,13 @@ from core.state import SystemState
 
 logger = logging.getLogger(__name__)
 
-MAX_BARS_TO_HOLD = 36   # 36 bars = 1.5 days on 1h (tightened from 72 for faster turnover)
+MAX_BARS_TO_HOLD = 72   # 72 bars = 3 days on 1h (restored from 36)
 
 # Trailing stop activation and tightening thresholds (in R-multiples)
-TRAIL_ACTIVATE_R     = 0.50  # activate trailing stop at +0.50R (from 0.75 — locks profits sooner)
-TRAIL_ATR_INITIAL    = Decimal("0.6")  # initial trail distance ×ATR14 (tightened from 1.5)
-TRAIL_ATR_TIGHT_1    = Decimal("0.4")  # tighten to ×ATR14 after +1.5R (from 1.0)
-TRAIL_ATR_TIGHT_2    = Decimal("0.3")  # tighten further after +2.5R (from 0.6)
+TRAIL_ACTIVATE_R     = 1.0   # activate trailing stop at +1.0R (from 0.50 — give winners room)
+TRAIL_ATR_INITIAL    = Decimal("1.5")  # initial trail distance ×ATR14 (restored from 0.6)
+TRAIL_ATR_TIGHT_1    = Decimal("1.0")  # tighten to ×ATR14 after +1.5R (restored from 0.4)
+TRAIL_ATR_TIGHT_2    = Decimal("0.6")  # tighten further after +2.5R (restored from 0.3)
 TRAIL_TIGHT_1_R      = 1.5   # R-multiple at which first tightening applies
 TRAIL_TIGHT_2_R      = 2.5   # R-multiple at which second tightening applies
 
@@ -79,7 +79,7 @@ PARTIAL_2_R          = 2.0   # take 20% off at +2R
 PARTIAL_2_FRACTION   = 0.20
 
 # Breakeven time stop
-BREAKEVEN_BARS       = 12    # apply breakeven stop after 12 bars (from 24 — faster protection)
+BREAKEVEN_BARS       = 24    # apply breakeven stop after 24 bars (restored from 12)
 BREAKEVEN_MIN_R      = 0.3   # minimum R-multiple to avoid breakeven stop
 
 
@@ -423,9 +423,8 @@ class ExitGroup(BaseGroup):
             else:
                 atr_mult = TRAIL_ATR_INITIAL
 
-            breakeven = position.entry_price
             candidate = features.close - atr_mult * features.atr14
-            new_trail = max(breakeven, candidate)
+            new_trail = candidate  # do NOT floor to breakeven — _apply_breakeven_stop() handles that
 
             if position.trailing_stop_price is None or new_trail > position.trailing_stop_price:
                 return new_trail
@@ -447,9 +446,8 @@ class ExitGroup(BaseGroup):
             else:
                 atr_mult = TRAIL_ATR_INITIAL
 
-            breakeven = position.entry_price
             candidate = features.close + atr_mult * features.atr14
-            new_trail = min(breakeven, candidate)
+            new_trail = candidate  # do NOT ceil to breakeven — _apply_breakeven_stop() handles that
 
             if position.trailing_stop_price is None or new_trail < position.trailing_stop_price:
                 return new_trail
