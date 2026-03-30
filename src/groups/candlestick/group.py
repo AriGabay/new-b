@@ -135,6 +135,28 @@ class CandlestickGroup(BaseGroup):
         bars = list(self._feature_history[symbol])
         signals: list[CandlestickSignal] = []
 
+        # Need at least 1 bar for single-bar patterns
+        if len(bars) >= 1:
+            current = bars[-1]
+
+            # H2-017: Dragonfly Doji (requires structural at_support)
+            if structural is not None:
+                dd_sig = self._detect_dragonfly_doji(symbol, current, structural)
+                if dd_sig is not None:
+                    signals.append(dd_sig)
+
+            # H2-018: Gravestone Doji (requires structural at_resistance)
+            if structural is not None:
+                gd_sig = self._detect_gravestone_doji(symbol, current, structural)
+                if gd_sig is not None:
+                    signals.append(gd_sig)
+
+            # H2-024: Long Lower Shadow (requires structural at_support + downtrend)
+            if structural is not None:
+                lls_sig = self._detect_long_lower_shadow(symbol, current, structural)
+                if lls_sig is not None:
+                    signals.append(lls_sig)
+
         # Need at least 2 bars for 2-bar patterns
         if len(bars) >= 2:
             current = bars[-1]
@@ -157,6 +179,21 @@ class CandlestickGroup(BaseGroup):
                 if ih_sig is not None:
                     signals.append(ih_sig)
 
+            # H2-019/H2-020: Kicking (bullish/bearish — no S/R required)
+            kick_sig = self._detect_kicking(symbol, current, prev)
+            if kick_sig is not None:
+                signals.append(kick_sig)
+
+            # H2-021: On Neck (bearish continuation — no S/R required)
+            on_sig = self._detect_on_neck(symbol, current, prev)
+            if on_sig is not None:
+                signals.append(on_sig)
+
+            # H2-022: Harami Cross (requires ADX > 15)
+            hc_sig = self._detect_harami_cross(symbol, current, prev)
+            if hc_sig is not None:
+                signals.append(hc_sig)
+
         # Need 3 bars for 3-bar patterns
         if len(bars) >= 3:
             # H2-002: Morning/Evening Star (requires structural)
@@ -174,6 +211,11 @@ class CandlestickGroup(BaseGroup):
             doji_sig = self._detect_doji(symbol, bars[-3:], structural)
             if doji_sig is not None:
                 signals.append(doji_sig)
+
+            # H2-023: Tri Star (3 consecutive dojis — very rare)
+            tri_sig = self._detect_tri_star(symbol, bars[-3:])
+            if tri_sig is not None:
+                signals.append(tri_sig)
 
         # Store signals in per-symbol cache so PanelDecisionGroup can retrieve them.
         # This is the fix for Phase 6.2.5: previously the cache was never populated,
@@ -787,4 +829,379 @@ class CandlestickGroup(BaseGroup):
                 "adx14": b2.adx14,
                 "has_structural_context": structural is not None,
             },
+        )
+
+    # ------------------------------------------------------------------
+    # H2-017: Dragonfly Doji (bullish reversal)
+    # ------------------------------------------------------------------
+
+    def _detect_dragonfly_doji(
+        self, symbol: str, current: FeatureVector, structural: StructuralLevelBundle,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-017: Dragonfly Doji. Doji body + upper_shadow <= body.
+        Long lower shadow signals buying pressure. Bullish at support.
+        From thesis Appendix A: is_doji_body AND upper_shadow <= body.
+        """
+        if current.adx14 < 15:
+            return None
+        if not current.doji_flag:
+            return None
+        if not structural.at_support:
+            return None
+
+        body = current.candle_body
+        upper_shadow = current.upper_shadow
+        lower_shadow = current.lower_shadow
+
+        # Dragonfly: upper shadow tiny, lower shadow long
+        if upper_shadow > body * Decimal("1.5"):
+            return None
+        if lower_shadow < body * Decimal("2"):
+            return None
+
+        return CandlestickSignal(
+            group_id=self.group_id.value, symbol=symbol,
+            timeframe=current.timeframe, timestamp=current.timestamp,
+            direction=Direction.LONG, signal_type="candlestick",
+            signal_subtype="dragonfly_doji", hypothesis_ref="H2-017",
+            quality_score=0.55, requires_structural_level=True,
+            context_confirmed=True, confirmation_required=False,
+            confirmed_on_bar_close=True, pattern_name="dragonfly_doji",
+            bars_consumed=1, nearest_structural_level=None,
+            structural_level_distance_pct=None,
+            metadata={"body": float(body), "lower_shadow": float(lower_shadow),
+                      "upper_shadow": float(upper_shadow), "adx14": current.adx14},
+        )
+
+    # ------------------------------------------------------------------
+    # H2-018: Gravestone Doji (bearish reversal)
+    # ------------------------------------------------------------------
+
+    def _detect_gravestone_doji(
+        self, symbol: str, current: FeatureVector, structural: StructuralLevelBundle,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-018: Gravestone Doji. Doji body + lower_shadow <= body.
+        Long upper shadow signals selling pressure. Bearish at resistance.
+        From thesis: is_doji_body AND lower_shadow <= body.
+        """
+        if current.adx14 < 15:
+            return None
+        if not current.doji_flag:
+            return None
+        if not structural.at_resistance:
+            return None
+
+        body = current.candle_body
+        upper_shadow = current.upper_shadow
+        lower_shadow = current.lower_shadow
+
+        # Gravestone: lower shadow tiny, upper shadow long
+        if lower_shadow > body * Decimal("1.5"):
+            return None
+        if upper_shadow < body * Decimal("2"):
+            return None
+
+        return CandlestickSignal(
+            group_id=self.group_id.value, symbol=symbol,
+            timeframe=current.timeframe, timestamp=current.timestamp,
+            direction=Direction.SHORT, signal_type="candlestick",
+            signal_subtype="gravestone_doji", hypothesis_ref="H2-018",
+            quality_score=0.55, requires_structural_level=True,
+            context_confirmed=True, confirmation_required=False,
+            confirmed_on_bar_close=True, pattern_name="gravestone_doji",
+            bars_consumed=1, nearest_structural_level=None,
+            structural_level_distance_pct=None,
+            metadata={"body": float(body), "upper_shadow": float(upper_shadow),
+                      "lower_shadow": float(lower_shadow), "adx14": current.adx14},
+        )
+
+    # ------------------------------------------------------------------
+    # H2-019/H2-020: Kicking (bullish/bearish — strong momentum shift)
+    # ------------------------------------------------------------------
+
+    def _detect_kicking(
+        self, symbol: str, current: FeatureVector, prev: FeatureVector,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-019: Kicking Bullish — bearish marubozu followed by bullish marubozu
+                 with gap up (or open >= prev close in crypto).
+        H2-020: Kicking Bearish — mirror.
+        From thesis: Bar1 marubozu (body_ratio > 0.90), Bar2 opposite marubozu.
+        In crypto (24/7, no gaps): Bar2 opens at/above Bar1 close for bullish.
+        Quality: 0.70 (strong momentum shift).
+        """
+        if current.adx14 < 15:
+            return None
+
+        prev_body_ratio = prev.body_ratio
+        curr_body_ratio = current.body_ratio
+
+        # Both bars must be strong (marubozu-like)
+        if prev_body_ratio < 0.85 or curr_body_ratio < 0.85:
+            return None
+
+        prev_bearish = prev.open > prev.close
+        prev_bullish = prev.open < prev.close
+        curr_bullish = current.close > current.open
+        curr_bearish = current.close < current.open
+
+        # Kicking Bullish: prev bearish marubozu → curr bullish marubozu, opens >= prev close
+        if prev_bearish and curr_bullish and current.open >= prev.close:
+            return CandlestickSignal(
+                group_id=self.group_id.value, symbol=symbol,
+                timeframe=current.timeframe, timestamp=current.timestamp,
+                direction=Direction.LONG, signal_type="candlestick",
+                signal_subtype="kicking_bullish", hypothesis_ref="H2-019",
+                quality_score=0.70, requires_structural_level=False,
+                context_confirmed=True, confirmation_required=False,
+                confirmed_on_bar_close=True, pattern_name="kicking_bullish",
+                bars_consumed=2, nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={"prev_body_ratio": prev_body_ratio,
+                          "curr_body_ratio": curr_body_ratio, "adx14": current.adx14},
+            )
+
+        # Kicking Bearish: prev bullish marubozu → curr bearish marubozu, opens <= prev close
+        if prev_bullish and curr_bearish and current.open <= prev.close:
+            return CandlestickSignal(
+                group_id=self.group_id.value, symbol=symbol,
+                timeframe=current.timeframe, timestamp=current.timestamp,
+                direction=Direction.SHORT, signal_type="candlestick",
+                signal_subtype="kicking_bearish", hypothesis_ref="H2-020",
+                quality_score=0.70, requires_structural_level=False,
+                context_confirmed=True, confirmation_required=False,
+                confirmed_on_bar_close=True, pattern_name="kicking_bearish",
+                bars_consumed=2, nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={"prev_body_ratio": prev_body_ratio,
+                          "curr_body_ratio": curr_body_ratio, "adx14": current.adx14},
+            )
+
+        return None
+
+    # ------------------------------------------------------------------
+    # H2-021: On Neck (bearish continuation)
+    # ------------------------------------------------------------------
+
+    def _detect_on_neck(
+        self, symbol: str, current: FeatureVector, prev: FeatureVector,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-021: On Neck (bearish continuation).
+        From thesis: In downtrend, Bar1 bearish with long body.
+        Bar2 opens below Bar1 low, closes near Bar1 low (within 0.3%).
+        Significant in 3/4 crypto datasets (academic finding).
+        """
+        if current.adx14 < 15:
+            return None
+
+        # Require downtrend: ema20 < ema50
+        if not (current.ema20 < current.ema50):
+            return None
+
+        # Bar1 must be bearish with substantial body
+        if not (prev.open > prev.close and prev.body_ratio > 0.5):
+            return None
+
+        # Bar2 opens below Bar1 low
+        if current.open > prev.low:
+            return None
+
+        # Bar2 closes near Bar1 low (within 0.3%)
+        prev_low = float(prev.low)
+        close = float(current.close)
+        if prev_low > 0:
+            distance_pct = abs(close - prev_low) / prev_low
+            if distance_pct > 0.003:  # within 0.3%
+                return None
+        else:
+            return None
+
+        return CandlestickSignal(
+            group_id=self.group_id.value, symbol=symbol,
+            timeframe=current.timeframe, timestamp=current.timestamp,
+            direction=Direction.SHORT, signal_type="candlestick",
+            signal_subtype="on_neck", hypothesis_ref="H2-021",
+            quality_score=0.55, requires_structural_level=False,
+            context_confirmed=True, confirmation_required=False,
+            confirmed_on_bar_close=True, pattern_name="on_neck",
+            bars_consumed=2, nearest_structural_level=None,
+            structural_level_distance_pct=None,
+            metadata={"prev_body_ratio": prev.body_ratio,
+                      "distance_to_prev_low_pct": round(distance_pct * 100, 3),
+                      "adx14": current.adx14},
+        )
+
+    # ------------------------------------------------------------------
+    # H2-022: Harami Cross (bullish/bearish reversal)
+    # ------------------------------------------------------------------
+
+    def _detect_harami_cross(
+        self, symbol: str, current: FeatureVector, prev: FeatureVector,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-022: Harami Cross. Like Harami but second candle is a Doji.
+        Bullish: large bearish → doji INSIDE previous body. Direction: LONG.
+        Bearish: large bullish → doji INSIDE previous body. Direction: SHORT.
+        First bar body_ratio > 0.6. ADX > 15.
+        """
+        if current.adx14 < 15:
+            return None
+        if not current.doji_flag:
+            return None
+        if prev.body_ratio < 0.6:
+            return None
+
+        # Doji must be inside the previous bar's body
+        prev_body_high = max(prev.open, prev.close)
+        prev_body_low = min(prev.open, prev.close)
+        curr_body_high = max(current.open, current.close)
+        curr_body_low = min(current.open, current.close)
+
+        if curr_body_high > prev_body_high or curr_body_low < prev_body_low:
+            return None
+
+        prev_bearish = prev.open > prev.close
+        prev_bullish = prev.open < prev.close
+
+        if prev_bearish:
+            # Bullish harami cross: large bear then doji inside
+            return CandlestickSignal(
+                group_id=self.group_id.value, symbol=symbol,
+                timeframe=current.timeframe, timestamp=current.timestamp,
+                direction=Direction.LONG, signal_type="candlestick",
+                signal_subtype="harami_cross_bullish", hypothesis_ref="H2-022",
+                quality_score=0.55, requires_structural_level=False,
+                context_confirmed=True, confirmation_required=True,
+                confirmed_on_bar_close=True, pattern_name="harami_cross_bullish",
+                bars_consumed=2, nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={"prev_body_ratio": prev.body_ratio, "adx14": current.adx14},
+            )
+
+        if prev_bullish:
+            # Bearish harami cross: large bull then doji inside
+            return CandlestickSignal(
+                group_id=self.group_id.value, symbol=symbol,
+                timeframe=current.timeframe, timestamp=current.timestamp,
+                direction=Direction.SHORT, signal_type="candlestick",
+                signal_subtype="harami_cross_bearish", hypothesis_ref="H2-022",
+                quality_score=0.55, requires_structural_level=False,
+                context_confirmed=True, confirmation_required=True,
+                confirmed_on_bar_close=True, pattern_name="harami_cross_bearish",
+                bars_consumed=2, nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={"prev_body_ratio": prev.body_ratio, "adx14": current.adx14},
+            )
+
+        return None
+
+    # ------------------------------------------------------------------
+    # H2-023: Tri Star (bullish/bearish reversal — very rare)
+    # ------------------------------------------------------------------
+
+    def _detect_tri_star(
+        self, symbol: str, bars: list,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-023: Tri Star. Three consecutive Doji candles.
+        Bullish: in downtrend, 3 dojis with middle doji lower. Direction: LONG.
+        Bearish: in uptrend, 3 dojis with middle doji higher. Direction: SHORT.
+        Very rare but strong when it appears.
+        """
+        if len(bars) < 3:
+            return None
+
+        b0, b1, b2 = bars[0], bars[1], bars[2]
+
+        # All three must be dojis
+        if not (b0.doji_flag and b1.doji_flag and b2.doji_flag):
+            return None
+
+        if b2.adx14 < 15:
+            return None
+
+        mid_close = float(b1.close)
+        first_close = float(b0.close)
+        last_close = float(b2.close)
+
+        # Bullish tri star: in downtrend, middle doji is lower
+        if b0.ema20 < b0.ema50 and mid_close < first_close and mid_close < last_close:
+            return CandlestickSignal(
+                group_id=self.group_id.value, symbol=symbol,
+                timeframe=b2.timeframe, timestamp=b2.timestamp,
+                direction=Direction.LONG, signal_type="candlestick",
+                signal_subtype="tri_star_bullish", hypothesis_ref="H2-023",
+                quality_score=0.60, requires_structural_level=False,
+                context_confirmed=True, confirmation_required=True,
+                confirmed_on_bar_close=True, pattern_name="tri_star_bullish",
+                bars_consumed=3, nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={"adx14": b2.adx14},
+            )
+
+        # Bearish tri star: in uptrend, middle doji is higher
+        if b0.ema20 > b0.ema50 and mid_close > first_close and mid_close > last_close:
+            return CandlestickSignal(
+                group_id=self.group_id.value, symbol=symbol,
+                timeframe=b2.timeframe, timestamp=b2.timestamp,
+                direction=Direction.SHORT, signal_type="candlestick",
+                signal_subtype="tri_star_bearish", hypothesis_ref="H2-023",
+                quality_score=0.60, requires_structural_level=False,
+                context_confirmed=True, confirmation_required=True,
+                confirmed_on_bar_close=True, pattern_name="tri_star_bearish",
+                bars_consumed=3, nearest_structural_level=None,
+                structural_level_distance_pct=None,
+                metadata={"adx14": b2.adx14},
+            )
+
+        return None
+
+    # ------------------------------------------------------------------
+    # H2-024: Long Lower Shadow (bullish)
+    # ------------------------------------------------------------------
+
+    def _detect_long_lower_shadow(
+        self, symbol: str, current: FeatureVector, structural: StructuralLevelBundle,
+    ) -> Optional[CandlestickSignal]:
+        """
+        H2-024: Long Lower Shadow (bullish).
+        From thesis: lower_shadow > 75% of total range.
+        Shows strong buying pressure from below.
+        Requires at_support and prior downtrend.
+        """
+        if current.adx14 < 15:
+            return None
+        if not structural.at_support:
+            return None
+        # Require downtrend
+        if not (current.ema20 < current.ema50):
+            return None
+
+        lower_shadow = current.lower_shadow
+        candle_range = current.candle_range
+
+        if candle_range <= Decimal("0"):
+            return None
+
+        shadow_pct = float(lower_shadow / candle_range)
+        if shadow_pct < 0.75:
+            return None
+
+        return CandlestickSignal(
+            group_id=self.group_id.value, symbol=symbol,
+            timeframe=current.timeframe, timestamp=current.timestamp,
+            direction=Direction.LONG, signal_type="candlestick",
+            signal_subtype="long_lower_shadow", hypothesis_ref="H2-024",
+            quality_score=0.50, requires_structural_level=True,
+            context_confirmed=True, confirmation_required=True,
+            confirmed_on_bar_close=True, pattern_name="long_lower_shadow",
+            bars_consumed=1, nearest_structural_level=None,
+            structural_level_distance_pct=None,
+            metadata={"shadow_pct": round(shadow_pct * 100, 1),
+                      "lower_shadow": float(lower_shadow),
+                      "candle_range": float(candle_range),
+                      "adx14": current.adx14},
         )

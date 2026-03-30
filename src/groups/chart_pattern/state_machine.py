@@ -120,6 +120,15 @@ from groups.chart_pattern.patterns.double_bottom import DoubleBottomMachine     
 from groups.chart_pattern.patterns.head_and_shoulders import HeadAndShouldersMachine  # noqa: E402,F401
 from groups.chart_pattern.patterns.descending_triangle import DescendingTriangleMachine  # noqa: E402,F401
 from groups.chart_pattern.patterns.triple_bottom import TripleBottomMachine          # noqa: E402,F401
+# Phase 4 new patterns
+from groups.chart_pattern.patterns.diamond_top import DiamondTopMachine              # noqa: E402,F401
+from groups.chart_pattern.patterns.diamond_bottom import DiamondBottomMachine        # noqa: E402,F401
+from groups.chart_pattern.patterns.ascending_channel import AscendingChannelMachine  # noqa: E402,F401
+from groups.chart_pattern.patterns.descending_channel import DescendingChannelMachine  # noqa: E402,F401
+from groups.chart_pattern.patterns.rounding_bottom import RoundingBottomMachine      # noqa: E402,F401
+from groups.chart_pattern.patterns.bump_and_run import BumpAndRunMachine             # noqa: E402,F401
+from groups.chart_pattern.patterns.broadening_top import BroadeningTopMachine        # noqa: E402,F401
+from groups.chart_pattern.patterns.triple_top import TripleTopMachine                # noqa: E402,F401
 
 __all__ = [
     "PatternState",
@@ -128,4 +137,13 @@ __all__ = [
     "HeadAndShouldersMachine",
     "DescendingTriangleMachine",
     "TripleBottomMachine",
+    # Phase 4 new patterns
+    "DiamondTopMachine",
+    "DiamondBottomMachine",
+    "AscendingChannelMachine",
+    "DescendingChannelMachine",
+    "RoundingBottomMachine",
+    "BumpAndRunMachine",
+    "BroadeningTopMachine",
+    "TripleTopMachine",
 ]
