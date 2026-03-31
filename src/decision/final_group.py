@@ -54,8 +54,11 @@ _PANEL_APPROVE_THRESHOLD = PANEL_APPROVE_THRESHOLD      # from panel_constants
 # Phase 11B: regime-adaptive base thresholds
 _REGIME_BASE_THRESHOLDS = PANEL_REGIME_THRESHOLDS       # from panel_constants
 
-# Rail 6: high-volatility adds this offset on top of regime base threshold
-_RAIL6_HIGH_VOL_OFFSET = 3
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+# Rail 6 absolute threshold = regime_base (15) + this offset (1) = 16.
+# Formula: _r6_thresh = _base_thresh + _RAIL6_HIGH_VOL_OFFSET + sym_offset
+_RAIL6_HIGH_VOL_OFFSET = 1
 
 # Task 11H: non-BTC symbols require tighter consensus (panel calibrated on BTC)
 _SYMBOL_THRESHOLD_OFFSET: dict[str, int] = PANEL_SYMBOL_THRESHOLD_OFFSET  # from panel_constants

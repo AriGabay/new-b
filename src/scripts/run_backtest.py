@@ -114,37 +114,32 @@ V1_BASELINE: dict[str, Any] = {
 # Iteration 2 = moderately looser.
 # ---------------------------------------------------------------------------
 _THRESHOLD_SCHEDULES: list[dict[str, Any]] = [
-    # iter 0 — production defaults (no change)
+    # iter 0 — sweep-optimal defaults (no change)
+    #   Base: APPROVE=15, MIN_AVG_SCORE=5.8, Rail6=16
+    #   See analysis/optimization_result.json — 68.2% WR, PF 1.85
     {},
-    # iter 1 — relax REDUCE_RISK lock (primary bottleneck: 25% DD threshold too
-    #           tight for leveraged futures; fires after just 2 consecutive losses).
-    #           Also loosen medium entry bar slightly.
+    # iter 1 — lightly looser than the sweep-optimal defaults.
+    #   REDUCE thresholds must be LOOSER (larger DD / more negative streak)
+    #   than the new optimal defaults (0.38 / -10) — never tighter.
+    #   Entry quality relaxed one step to let more signals through.
     {
-        # REDUCE_RISK MDP policy — raise DD threshold closer to the 40% halt floor.
-        # This is a tunable MDP policy parameter, NOT a safety rail.
-        # Hard safety rails (FinalDecisionGroup, RiskLeverageGroup, 40% halt) unchanged.
-        "REDUCE_MAX_DRAWDOWN": 0.35,    # was 0.25; still well below 40% halt threshold
-        "REDUCE_MAX_STREAK":   -6,      # was -4; allow more recovery attempts
-        # Entry quality
-        "MED_MIN_APPROVALS":   10,
+        # REDUCE_RISK MDP policy — already at optimal; relax a step further
+        # for recovery. Hard safety rails (FinalDecisionGroup, 40% halt) unchanged.
+        "REDUCE_MAX_DRAWDOWN": 0.38,    # same as optimal default — no extra lock
+        "REDUCE_MAX_STREAK":   -12,     # looser than -10 optimal
+        # Entry quality — one step below optimal 5.8 to find more trades
         "MED_MIN_AVG_SCORE":   5.5,
-        "SMALL_MIN_APPROVALS": 10,
         "SMALL_MIN_AVG_SCORE": 5.5,
-        "HC_MIN_APPROVALS":    13,
         "HC_MIN_AVG_SCORE":    6.5,
     },
-    # iter 2 — loosen further; REDUCE_RISK only fires near halt threshold
+    # iter 2 — moderately looser; near the practical floor
     {
-        "REDUCE_MAX_DRAWDOWN": 0.38,    # just below 40% halt — MDP policy only
-        "REDUCE_MAX_STREAK":   -8,
-        "MED_MIN_APPROVALS":   9,
+        "REDUCE_MAX_DRAWDOWN": 0.39,    # fractionally above optimal; still below 40% halt
+        "REDUCE_MAX_STREAK":   -15,
         "MED_MIN_AVG_SCORE":   5.2,
         "MED_MIN_RR":          1.5,
-        "SMALL_MIN_APPROVALS": 9,
         "SMALL_MIN_AVG_SCORE": 5.2,
-        "HC_MIN_APPROVALS":    12,
         "HC_MIN_AVG_SCORE":    6.0,
-        "DEFER_MIN_APPROVALS": 7,
         "DEFER_MIN_AVG_SCORE": 5.0,
     },
 ]
@@ -215,24 +210,28 @@ def _patch_mdp_thresholds(overrides: dict[str, Any]) -> None:
 
 
 def _reset_mdp_thresholds() -> None:
-    """Restore mdp.policy constants to their source-code defaults."""
+    """Restore mdp.policy constants to their sweep-optimal source-code defaults.
+
+    Values match analysis/optimization_result.json (approve=15, Rail6=16,
+    68.2% WR, PF 1.85).  Approval counts (HC/MED/SMALL/DEFER _MIN_APPROVALS)
+    are dynamically computed from PANEL_REGIME_THRESHOLDS in policy.py and do
+    not exist as module-level constants — setting them here has no effect.
+    """
     import mdp.policy as _pol
-    _pol.HC_MIN_APPROVALS    = 14
+    # Restored to sweep-optimal value (approve=15, Rail6=16)
+    # See analysis/optimization_result.json — 68.2% WR, PF 1.85
     _pol.HC_MIN_AVG_SCORE    = 7.0
     _pol.HC_MAX_STD_DEV      = 1.5
-    _pol.HC_MAX_DRAWDOWN     = 0.10
-    _pol.HC_MIN_WIN_RATE     = 0.50
-    _pol.MED_MIN_APPROVALS   = 11
-    _pol.MED_MIN_AVG_SCORE   = 5.5
-    _pol.MED_MIN_RR          = 2.0
-    _pol.SMALL_MIN_APPROVALS = 11
-    _pol.SMALL_MIN_AVG_SCORE = 5.5
-    _pol.DEFER_MIN_APPROVALS = 8
+    _pol.HC_MAX_DRAWDOWN     = 0.15
+    _pol.HC_MIN_WIN_RATE     = 0.48
+    _pol.MED_MIN_AVG_SCORE   = 5.8
+    _pol.MED_MIN_RR          = 1.5
+    _pol.SMALL_MIN_AVG_SCORE = 5.8
     _pol.DEFER_MIN_AVG_SCORE = 5.5
     _pol.DEFER_MIN_COMPOSITE = 0.65
     _pol.DEFER_MAX_STD_DEV   = 2.0
-    _pol.REDUCE_MAX_STREAK   = -4
-    _pol.REDUCE_MAX_DRAWDOWN = 0.25
+    _pol.REDUCE_MAX_STREAK   = -10
+    _pol.REDUCE_MAX_DRAWDOWN = 0.38
 
 
 def _parse_args() -> argparse.Namespace:

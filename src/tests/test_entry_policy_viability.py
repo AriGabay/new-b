@@ -390,10 +390,14 @@ def test_policy_comparison_is_deterministic():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_panel_thresholds_unchanged():
-    """Panel thresholds lowered to 12/20 approve and avg 5.5 (Task 11)."""
+    """Panel thresholds restored to sweep-optimal values: 15/20 approve and avg 5.8.
+    See analysis/optimization_result.json — 68.2% WR, PF 1.85 (approve=15, Rail6=16).
+    """
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 12
-    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.5
+    # Restored to sweep-optimal value (approve=15, Rail6=16)
+    # See analysis/optimization_result.json — 68.2% WR, PF 1.85
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 15
+    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.8
 
 
 @pytest.mark.asyncio

@@ -433,15 +433,21 @@ def test_ideal_phase3_proposal_passes_final_decision():
 
 
 def test_panel_approve_threshold_unchanged():
-    """APPROVE_THRESHOLD lowered to 12/20 to increase trade frequency (Task 11)."""
+    """APPROVE_THRESHOLD restored to sweep-optimal 15/20.
+    See analysis/optimization_result.json — 68.2% WR, PF 1.85 (approve=15, Rail6=16)."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 12
+    # Restored to sweep-optimal value (approve=15, Rail6=16)
+    # See analysis/optimization_result.json — 68.2% WR, PF 1.85
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 15
 
 
 def test_panel_min_avg_score_unchanged():
-    """MIN_AVG_SCORE lowered to 5.5 for increased trade frequency (Task 11)."""
+    """MIN_AVG_SCORE restored to sweep-optimal 5.8.
+    See analysis/optimization_result.json — 68.2% WR, PF 1.85 (approve=15, Rail6=16)."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.5
+    # Restored to sweep-optimal value (approve=15, Rail6=16)
+    # See analysis/optimization_result.json — 68.2% WR, PF 1.85
+    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.8
 
 
 # ===========================================================================

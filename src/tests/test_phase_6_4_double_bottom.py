@@ -266,8 +266,10 @@ class TestPhase64NoPolicyViolation:
     def test_panel_threshold_unchanged(self):
         from traders.panel import TraderEvaluatorPanel
         panel = TraderEvaluatorPanel()
-        assert panel.APPROVE_THRESHOLD == 12  # Task 11: lowered from 15
-        assert panel.AVG_SCORE_THRESHOLD == 5.5
+        # Restored to sweep-optimal value (approve=15, Rail6=16)
+        # See analysis/optimization_result.json — 68.2% WR, PF 1.85
+        assert panel.APPROVE_THRESHOLD == 15
+        assert panel.AVG_SCORE_THRESHOLD == 5.8
 
     def test_chart_pattern_group_is_wired_in_runner(self):
         """ChartPatternGroup must be in runner's _all_groups."""

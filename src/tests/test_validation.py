@@ -537,8 +537,10 @@ def test_threshold_analyzer_has_production_row():
     report = analyzer.analyze(records)
     prod_rows = [r for r in report["rows"] if r.get("is_production")]
     assert len(prod_rows) == 1
-    assert prod_rows[0]["approve_threshold"] == 12  # Task 11: lowered from 15
-    assert prod_rows[0]["min_avg_score"] == 5.5
+    # Restored to sweep-optimal value (approve=15, Rail6=16)
+    # See analysis/optimization_result.json — 68.2% WR, PF 1.85
+    assert prod_rows[0]["approve_threshold"] == 15
+    assert prod_rows[0]["min_avg_score"] == 5.8
 
 
 def test_threshold_analyzer_production_threshold_not_mutated():

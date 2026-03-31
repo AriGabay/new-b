@@ -46,21 +46,31 @@ _SYMBOL_THRESHOLD_OFFSET: dict[str, int] = PANEL_SYMBOL_THRESHOLD_OFFSET  # from
 
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5
-HC_MAX_DRAWDOWN     = 0.10
-HC_MIN_WIN_RATE     = 0.50
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+HC_MAX_DRAWDOWN     = 0.15
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+HC_MIN_WIN_RATE     = 0.48
 
-MED_MIN_AVG_SCORE   = 5.5
-MED_MIN_RR          = 2.0
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+MED_MIN_AVG_SCORE   = 5.8
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+MED_MIN_RR          = 1.5
 
-SMALL_MIN_AVG_SCORE = 5.5
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+SMALL_MIN_AVG_SCORE = 5.8
 
 DEFER_MIN_AVG_SCORE = 5.5
 DEFER_MIN_COMPOSITE = 0.65
 DEFER_MAX_STD_DEV   = 2.0
 
-# Phase 4: relaxed from -4/0.25 to prevent premature trade blocking
-# With 56% WR, 8 consecutive losses has only 0.15% probability
-REDUCE_MAX_STREAK   = -8
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+REDUCE_MAX_STREAK   = -10
 REDUCE_MAX_DRAWDOWN = 0.38
 
 

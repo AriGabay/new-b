@@ -203,9 +203,12 @@ class TestMDPPolicyRules:
         self.policy = MDPPolicy()
 
     def test_r0_reduce_risk_streak(self):
-        """R0: triggered by streak <= -8 (Phase 4: relaxed from -4)."""
+        """R0: triggered by streak <= -10 (sweep-optimal: relaxed from -8).
+        See analysis/optimization_result.json — 68.2% WR, PF 1.85."""
         from mdp.actions import MDPAction
-        state = _make_mdp_state(current_streak=-9, drawdown_pct=0.05)
+        # Restored to sweep-optimal value (approve=15, Rail6=16)
+        # REDUCE_MAX_STREAK = -10; streak must be <= -10 to trigger R0
+        state = _make_mdp_state(current_streak=-11, drawdown_pct=0.05)
         action, reasoning = self.policy.decide(state)
         assert action == MDPAction.REDUCE_RISK
         assert reasoning["rule_number"] == 0
@@ -265,12 +268,14 @@ class TestMDPPolicyRules:
         assert reasoning["size_multiplier"] == 1.0
 
     def test_r2_fails_if_rr_too_low(self):
-        """R2 requires r_r_ratio >= 2.0."""
+        """R2 requires r_r_ratio >= 1.5 (sweep-optimal: reduced from 2.0).
+        See analysis/optimization_result.json — 68.2% WR, PF 1.85."""
         from mdp.actions import MDPAction
+        # Restored to sweep-optimal value: MED_MIN_RR = 1.5
         state = _make_mdp_state(
             approve_count=15,
             avg_score=6.5,
-            r_r_ratio=1.7,     # below threshold
+            r_r_ratio=1.2,     # below new threshold of 1.5
             drawdown_pct=0.05,
             current_streak=0,
             volatility_regime="normal",
@@ -279,12 +284,14 @@ class TestMDPPolicyRules:
         assert action != MDPAction.ENTER_MEDIUM
 
     def test_r3_enter_small_high_drawdown(self):
-        """R3: qualifying but high drawdown → ENTER_SMALL."""
+        """R3: qualifying but high drawdown → ENTER_SMALL.
+        r_r_ratio=1.2 is below MED_MIN_RR=1.5 so R2 doesn't fire first.
+        (Sweep-optimal: MED_MIN_RR reduced from 2.0 to 1.5.)"""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
             approve_count=15,
             avg_score=6.5,
-            r_r_ratio=1.7,     # <2.0 so R2 doesn't fire
+            r_r_ratio=1.2,     # <1.5 so R2 doesn't fire
             drawdown_pct=0.15, # triggers R3
             current_streak=0,
             volatility_regime="normal",
@@ -295,12 +302,13 @@ class TestMDPPolicyRules:
         assert reasoning["size_multiplier"] == 0.5
 
     def test_r3_enter_small_high_volatility(self):
-        """R3: qualifying but high volatility → ENTER_SMALL."""
+        """R3: qualifying but high volatility → ENTER_SMALL.
+        r_r_ratio=1.2 is below MED_MIN_RR=1.5 so R2 doesn't fire first."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
             approve_count=15,
             avg_score=6.5,
-            r_r_ratio=1.7,
+            r_r_ratio=1.2,     # <1.5 so R2 doesn't fire
             drawdown_pct=0.05,
             current_streak=0,
             volatility_regime="high",   # triggers R3
@@ -310,12 +318,13 @@ class TestMDPPolicyRules:
         assert reasoning["rule_number"] == 3
 
     def test_r3_enter_small_loss_streak(self):
-        """R3: qualifying but loss streak -3 → ENTER_SMALL."""
+        """R3: qualifying but loss streak -3 → ENTER_SMALL.
+        r_r_ratio=1.2 is below MED_MIN_RR=1.5 so R2 doesn't fire first."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(
             approve_count=15,
             avg_score=6.5,
-            r_r_ratio=1.7,
+            r_r_ratio=1.2,     # <1.5 so R2 doesn't fire
             drawdown_pct=0.05,
             current_streak=-3,   # triggers R3
             volatility_regime="normal",

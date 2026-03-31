@@ -17,14 +17,22 @@ Threshold semantics:
 """
 from __future__ import annotations
 
-PANEL_APPROVE_THRESHOLD: int = 12
-PANEL_MIN_AVG_SCORE: float = 5.5
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+PANEL_APPROVE_THRESHOLD: int = 15
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+PANEL_MIN_AVG_SCORE: float = 5.8
 
+# Restored to sweep-optimal value (approve=15, Rail6=16)
+# See analysis/optimization_result.json — 68.2% WR, PF 1.85
+# NOTE: bull/trending kept at 15 — T=15 is the structural optimum across ALL regimes,
+# not just one. Do NOT lower thresholds in bull market.
 PANEL_REGIME_THRESHOLDS: dict[str, int] = {
-    "bull":     11,
-    "trending": 11,
-    "ranging":  12,
-    "bear":     12,
+    "bull":     15,
+    "trending": 15,
+    "ranging":  15,
+    "bear":     15,
 }
 
 # Task 11H: non-BTC symbols require tighter consensus
