@@ -22,8 +22,9 @@ Hard safety rails (non-overridable — override MDP if any triggered):
   6. volatility_regime == "high" AND approve_count < 14 → hold
 
 MDP actions → decision mapping:
-  ENTER_SMALL / ENTER_MEDIUM / ENTER_HIGH_CONVICTION → "enter"
-  NO_TRADE / DEFER / REDUCE_RISK → "hold"
+  ENTER_SMALL / ENTER_MEDIUM / ENTER_HIGH_CONVICTION → "enter" (full/scaled size)
+  REDUCE_RISK → "enter" at 50% position size (drawdown/streak protection mode)
+  NO_TRADE / DEFER → "hold"
 
 FinalDecisionGroup is callable with no constructor args (system_state and
 journal_extension are optional) for full backward compatibility with tests.
@@ -244,7 +245,7 @@ class FinalDecisionGroup:
             size_multiplier=ACTION_SIZE_MULTIPLIERS.get(action, 0.0),
         )
 
-        if action in ENTER_ACTIONS:
+        if action in ENTER_ACTIONS or action == MDPAction.REDUCE_RISK:
             decision.decision = "enter"
             decision.direction = direction_value
             decision.entry_price = float(proposal.entry_price)
@@ -256,6 +257,13 @@ class FinalDecisionGroup:
                 f"avg_score={panel.avg_score:.1f}. "
                 f"Strengths: {'; '.join(panel.key_strengths[:3])}"
             )
+            if action == MDPAction.REDUCE_RISK:
+                logger.info(
+                    "REDUCE_RISK: entering at 50%% position size "
+                    "(streak=%d, drawdown=%.1f%%)",
+                    mdp_state.current_streak,
+                    mdp_state.drawdown_pct * 100,
+                )
         else:
             decision.decision = "hold"
             if safety_override:
@@ -266,11 +274,6 @@ class FinalDecisionGroup:
                 decision.hold_rationale = (
                     f"MDP DEFER: {panel.approve_count}/20 approve "
                     f"(near threshold — re-evaluate next bar)"
-                )
-            elif action == MDPAction.REDUCE_RISK:
-                decision.hold_rationale = (
-                    f"MDP REDUCE_RISK: streak={mdp_state.current_streak} "
-                    f"drawdown={mdp_state.drawdown_pct:.1%}"
                 )
             else:
                 decision.hold_rationale = (

@@ -169,11 +169,20 @@ class TestMDPAction:
         for action in ENTER_ACTIONS:
             assert ACTION_SIZE_MULTIPLIERS[action] > 0.0
 
-    def test_non_enter_actions_have_zero_multipliers(self):
-        from mdp.actions import MDPAction, ACTION_SIZE_MULTIPLIERS, ENTER_ACTIONS
-        for action in MDPAction:
-            if action not in ENTER_ACTIONS:
-                assert ACTION_SIZE_MULTIPLIERS[action] == 0.0
+    def test_blocking_actions_have_zero_multipliers(self):
+        """NO_TRADE and DEFER produce no position — size multiplier must be 0.0.
+        REDUCE_RISK is intentionally excluded: it enters at 0.5 (half size).
+        """
+        from mdp.actions import MDPAction, ACTION_SIZE_MULTIPLIERS
+        for action in (MDPAction.NO_TRADE, MDPAction.DEFER):
+            assert ACTION_SIZE_MULTIPLIERS[action] == 0.0, (
+                f"{action} should have 0.0 multiplier, got {ACTION_SIZE_MULTIPLIERS[action]}"
+            )
+
+    def test_reduce_risk_enters_at_half_size(self):
+        """REDUCE_RISK allows entry but at 50% position size, not a full block."""
+        from mdp.actions import MDPAction, ACTION_SIZE_MULTIPLIERS
+        assert ACTION_SIZE_MULTIPLIERS[MDPAction.REDUCE_RISK] == 0.5
 
     def test_high_conviction_has_largest_multiplier(self):
         from mdp.actions import MDPAction, ACTION_SIZE_MULTIPLIERS

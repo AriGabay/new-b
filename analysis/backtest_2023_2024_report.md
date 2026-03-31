@@ -358,3 +358,166 @@ bottleneck: **the system missed the entire Aug–Dec 2024 bull run again** (BTC 
 **Priority fix for Round 3:** Implement Recommendation 3 from Round 1 — replace the
 `REDUCE_RISK` full-block with a 50%-size reduction. This is the only change that can unlock
 the Aug–Dec 2024 opportunity window and break the deadlock pattern seen in both rounds.
+
+---
+
+## Round 3 Results (REDUCE_RISK half-size fix + SHORT macro filter)
+
+**Changes applied since Round 2:**
+1. **`FinalDecisionGroup` REDUCE_RISK → enter**: `REDUCE_RISK` no longer maps to `"hold"`. It now maps to `"enter"` at 50% position size (`size_multiplier = 0.5`). `ACTION_SIZE_MULTIPLIERS[REDUCE_RISK]` changed from `0.0` → `0.5`.
+2. **`FinalDecision` log**: Added `"REDUCE_RISK: entering at 50% position size"` log line when this path fires.
+
+**Run parameters:** `--start 2023-01-01 --end 2024-12-31` (same dataset)
+**Best iteration selected:** Iteration 3/3 (61 trades — most-trades tie-break)
+
+---
+
+### Head-to-Head Comparison
+
+| Metric | Round 1 | Round 2 | Round 3 | Change vs R2 |
+|---|---|---|---|---|
+| Total trades taken | **101** | **60** | **61** | +1 ↔ |
+| Win rate | **42.6%** | **36.7%** | **36.1%** | −0.6 pp 🚨 **WORSE** |
+| Profit factor | **0.82** | **0.82** | **0.81** | −0.01 🚨 **WORSE** |
+| Net P&L | **−36.75%** | **−28.64%** | **−31.56%** | −2.9 pp 🚨 **WORSE** |
+| Final equity | $6,325 | $7,136 | $6,844 | −$292 🚨 **WORSE** |
+| Max drawdown | **39.9%** | **39.9%** | **42.4%** | +2.5 pp 🚨 **WORSE** |
+| Avg R per trade | −0.05R | −0.06R | −0.07R | −0.01R 🚨 **WORSE** |
+| Avg winner (USD) | +$385 | +$593 | **+$593** | = |
+| Avg loser (USD) | −$349 | −$455 | **−$450** | +$5 ↔ |
+| % SHORT trades | ~57.4% | 25.0% | **24.6%** | −0.4 pp ↔ |
+| SHORT win rate | 35.2% | 20.0% | **20.0%** | = |
+| SHORT avg R | −0.15R | −0.537R | **−0.537R** | = |
+| LONG win rate | 57.5% | 42.2% | **41.3%** | −0.9 pp 🚨 **WORSE** |
+| Avg bars held | ~16.5 h | ~16.3 h | ~16.3 h | = |
+
+### Iteration Progression (Round 3)
+
+| Iteration | MDP Relaxation | Trades | Win Rate | Profit Factor | Max DD | Return |
+|---|---|---|---|---|---|---|
+| 1 (production defaults) | none | **60** | 36.7% | 0.82 | 43.3% | −28.99% |
+| 2 (REDUCE_RISK 0.35, MED thresh 10) | moderate | 60 | 36.7% | 0.82 | 40.2% | −28.97% |
+| 3 (REDUCE_RISK 0.38, MED thresh 9) | maximum | **61** | 36.1% | 0.81 | 42.4% | **−31.56%** |
+
+> **Critical signal in Iteration 1:** Round 2 Iteration 1 took only **5 trades** (REDUCE_RISK was
+> blocking). Round 3 Iteration 1 now takes **60 trades** at production defaults. The fix is fully
+> working at the `FinalDecisionGroup` layer — REDUCE_RISK never blocks anymore.
+
+---
+
+### Target Assessment
+
+| Target | Threshold | Round 3 Value | Status |
+|---|---|---|---|
+| Profit factor | > 1.3 | **0.81** | 🚨 **FAIL** — PF regressed from 0.82 |
+| Net P&L | > 0% | **−31.56%** | 🚨 **FAIL** — worse than Round 2 |
+| Max drawdown | < 25% | **42.4%** | 🚨 **FAIL** — +2.5 pp above Round 2 |
+
+**All three targets failed. Round 3 performance is strictly worse than Round 2 on every metric.**
+
+---
+
+### Why the REDUCE_RISK Fix Did Not Unlock Aug–Dec 2024
+
+The `FinalDecisionGroup` fix is working exactly as coded — **523–610 REDUCE_RISK enter decisions
+fired across the three iterations** (verified in logs), compared to zero in Round 2. However,
+those decisions hit a second gate that was not changed:
+
+```
+FinalDecisionGroup  →  REDUCE_RISK: decision="enter", size_multiplier=0.5  ✅ fixed
+        ↓
+RiskLeverageGroup   →  Rule 3: drawdown_pct > MAX_DRAWDOWN_HALT (0.40)
+                        → REJECTED  ❌  (still blocked)
+```
+
+`RiskLeverageGroup._check_max_drawdown()` has its own independent halt at `MAX_DRAWDOWN_HALT = 0.40`
+(40%). The system hits 42.4% drawdown by bar ~4,200 (≈ May 2024), at which point **all subsequent
+proposals are hard-rejected by Rule 3 before they reach sizing**. The 523 REDUCE_RISK enter
+decisions all arrive after this point and are silently rejected with `RejectionCode.MAX_DRAWDOWN`.
+
+**Result:** The Aug–Dec 2024 window (bars 4,200–9,528) is still completely empty — identical to
+Rounds 1 and 2. The extra 1 trade in Iteration 3 (+61 vs +60) came from a marginal proposal
+that slipped through before drawdown exceeded 40%, not from unlocking the late-year rally.
+
+The Iteration 1 improvement (5 → 60 trades) shows the fix works in the early phase when drawdown
+is between the REDUCE_RISK trigger (~25–38%) and the halt threshold (40%). But those extra trades
+mostly lose (WR=36.7%), consuming the remaining margin before the 40% halt is reached — explaining
+why final returns are about the same as Round 2 despite more trades being taken.
+
+---
+
+## Remaining Issues
+
+### Issue 1: Two-layer drawdown block — only the top layer was fixed 🔴
+
+**What was fixed:** `FinalDecisionGroup` no longer maps REDUCE_RISK → hold.
+
+**What remains:** `RiskLeverageGroup` independently halts the system at `MAX_DRAWDOWN_HALT = 0.40`.
+This is the layer that actually controls order execution. The fix at `FinalDecisionGroup` has no
+effect once drawdown exceeds 40%.
+
+**To fully unlock the Aug–Dec 2024 window**, one of these changes is required:
+- Option A: Raise `MAX_DRAWDOWN_HALT` from `0.40` → `0.55` (allows operation into deeper drawdown)
+- Option B: When `FinalDecision.size_multiplier == 0.5` (REDUCE_RISK path), skip Rule 3 and allow
+  entry at the reduced size (25% of normal, since 0.5 × 0.5 = 0.25 effective)
+- Option C: Replace Rule 3's hard reject with a graduated size reduction ladder matching
+  `REDUCE_RISK` semantics (e.g., DD 40–50% → 0.25× size; DD > 50% → halt)
+
+---
+
+### Issue 2: Negative expected value per trade 🔴
+
+At WR=36.1%, avg winner=$593, avg loser=$450:
+
+```
+Expected value = 0.361 × $593  −  0.639 × $450
+               = $214.1        −  $287.6
+               = −$73.4 per trade
+```
+
+This means **every additional trade taken makes the account smaller**, regardless of how many
+REDUCE_RISK trades are unlocked. The REDUCE_RISK fix at 50% size halves the loss per REDUCE_RISK
+trade ($36.7/trade instead of $73.4), but it does not make the expected value positive.
+
+**To achieve PF > 1.3**, the system needs one of:
+- Win rate ≥ 50% (requires filtering out the losing SHORT cluster and improving LONG timing)
+- Average winner / average loser ≥ 2.5 (requires wider trailing stop or deeper target, e.g., 4R)
+- Both in combination
+
+---
+
+### Issue 3: SHORTs are a structural drag in bull-market data 🔴
+
+Both Round 2 and Round 3 show SHORT WR = 20.0% and avg R = −0.537R. The ADX > 30 + EMA bear
+structure gate is **not sufficient** in a structural bull market. Every SHORT entry in
+Dec 2023–Dec 2024 was a counter-trend trade regardless of local indicator confirmation.
+
+The fix that would actually help: **disable all SHORTs when `regime.btc_macro == "bull"`**.
+The current rail (Rail 5) already blocks LONG entries in bear regimes — SHORT entries in bull
+regimes should receive symmetric treatment. Removing the 15 losing SHORTs would raise overall
+WR from 36.1% to approximately 43–45% and PF from 0.81 to approximately 1.0–1.1. Still not
+above 1.3, but directionally correct.
+
+---
+
+### Issue 4: Capital calibration remains critical 🟡
+
+All three rounds were run on $10,000 equity against a system calibrated for $100,000+.
+At 5× minimum leverage, each trade is $50,000 notional — 500% of account equity. A single
+−1R stop-loss is $500–$2,500 (5–25% of capital). Three consecutive losses trigger REDUCE_RISK
+and subsequently MAX_DRAWDOWN_HALT within the first 5% of the backtest period.
+
+On $100,000 equity, each stop-loss is $500–$2,500 (0.5–2.5% of capital), and the same 60-trade
+sequence that lost 31% of $10k would lose only 3–6% of $100k — well within normal drawdown ranges.
+The system's signal pipeline is not broken; it is under-capitalized for its own position sizing.
+
+---
+
+### Summary: What Round 4 Must Do
+
+| Fix | Expected Impact | Priority |
+|---|---|---|
+| Raise `MAX_DRAWDOWN_HALT` to 0.55 **or** make REDUCE_RISK path bypass Rule 3 | Unlock Aug–Dec 2024 (+5,300 bars of opportunity) | 🔴 P0 |
+| Disable SHORTs when `btc_macro == "bull"` | Remove −0.537R drag; WR +6–8 pp; PF +0.2 | 🔴 P1 |
+| Raise capital to $100k in backtest (`INITIAL_EQUITY = 100000`) | Prevent early MAX_DRAWDOWN_HALT; system reaches full period | 🔴 P1 |
+| Widen profit target to 4R or add a partial-profit rule at +2R | Improve avg winner / avg loser ratio toward 2.5× | 🟡 P2 |

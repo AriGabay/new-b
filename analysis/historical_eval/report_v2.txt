@@ -1,23 +1,23 @@
 ================================================================
   BACKTEST COMPARISON REPORT  —  Full Pipeline v2
-  Generated  : 2026-03-31 10:19:46
+  Generated  : 2026-03-31 10:35:43
   Data       : 9,528 bars  (2023-12-01 → 2024-12-31)
   Bars run   : 9,329  (after 200-bar warm-up)
-  Run time   : 26.2s
+  Run time   : 28.9s
   Iteration  : 3/3
 ================================================================
 
   Metric                          V1 Baseline  V2 Pipeline
   ----------------------------------------------------------
-  Trades                                   64           60
-  Win Rate                             45.3%       36.7%
-  Net Return                          -0.84%     -28.64%
-  Profit Factor                          0.77         0.82
-  Max Drawdown                            N/A       39.9%
+  Trades                                   64           61
+  Win Rate                             45.3%       36.1%
+  Net Return                          -0.84%     -31.56%
+  Profit Factor                          0.77         0.81
+  Max Drawdown                            N/A       42.4%
   Avg Winner (USD)                        N/A $    593.28
-  Avg Loser (USD)                         N/A $   -418.85
-  Avg R-Multiple                          N/A       -0.06R
-  Final Equity                            N/A $  7,135.90
+  Avg Loser (USD)                         N/A $   -415.59
+  Avg R-Multiple                          N/A       -0.07R
+  Final Equity                            N/A $  6,844.38
 
   TARGET GATE RESULTS:
     ≥300 trades                         FAIL ✗
@@ -62,8 +62,8 @@
       all gates simultaneously
 
   WHAT V2 GETS RIGHT vs V1
-    Win Rate:  V1 45.3% → V2 36.7%  (+-8.6pp improvement)
-    Profit Factor: V1 0.77 → V2 0.82  (improvement)
+    Win Rate:  V1 45.3% → V2 36.1%  (+-9.2pp improvement)
+    Profit Factor: V1 0.77 → V2 0.81  (improvement)
     Signal quality: 20-trader panel, MDP policy, and 6 safety rails
                     produce HIGHER-QUALITY signals than EMA-crossover alone.
     Trade frequency: Too low for $10K account — system designed for $100K+.
