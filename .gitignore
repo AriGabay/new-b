@@ -127,4 +127,7 @@ src/data/journal.db
 # ----------------------------
 bybit_keys.json
 credentials.json
-config/secrets.py
+config/secrets.py*.db-wal
+*.db-shm
+data/backtest_learning.db
+data/journal.db

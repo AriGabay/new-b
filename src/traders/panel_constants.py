@@ -26,6 +26,8 @@ PANEL_MIN_AVG_SCORE: float = 5.8
 
 # Restored to sweep-optimal value (approve=15, Rail6=16)
 # See analysis/optimization_result.json — 68.2% WR, PF 1.85
+# Sweep-optimal: T=15 across all regimes (optimization_result.json)
+# T=14 was below breakeven — do not lower below 15
 # NOTE: bull/trending kept at 15 — T=15 is the structural optimum across ALL regimes,
 # not just one. Do NOT lower thresholds in bull market.
 PANEL_REGIME_THRESHOLDS: dict[str, int] = {

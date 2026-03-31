@@ -1,33 +1,33 @@
 ================================================================
   BACKTEST COMPARISON REPORT  —  Full Pipeline v2
-  Generated  : 2026-03-31 12:56:58
-  Data       : 9,528 bars  (2023-12-01 → 2024-12-31)
-  Bars run   : 9,329  (after 200-bar warm-up)
-  Run time   : 28.7s
+  Generated  : 2026-03-31 14:08:04
+  Data       : 18,288 bars  (2023-12-01 → 2025-12-31)
+  Bars run   : 18,089  (after 200-bar warm-up)
+  Run time   : 88.9s
   Iteration  : 1/3
 ================================================================
 
   Metric                          V1 Baseline  V2 Pipeline
   ----------------------------------------------------------
-  Trades                                   64           14
-  Win Rate                             45.3%       42.9%
-  Net Return                          -0.84%       6.48%
-  Profit Factor                          0.77         1.24
+  Trades                                   64           26
+  Win Rate                             45.3%       50.0%
+  Net Return                          -0.84%      29.53%
+  Profit Factor                          0.77         1.71
   Max Drawdown                            N/A       14.5%
-  Avg Winner (USD)                        N/A $     55.75
-  Avg Loser (USD)                         N/A $    -33.71
-  Avg R-Multiple                          N/A        0.25R
-  Final Equity                            N/A $  1,064.83
+  Avg Winner (USD)                        N/A $     54.49
+  Avg Loser (USD)                         N/A $    -31.77
+  Avg R-Multiple                          N/A        0.23R
+  Final Equity                            N/A $  1,295.32
 
   TARGET GATE RESULTS:
     ≥300 trades                         FAIL ✗
     ≥52% win rate                       FAIL ✗
-    PF ≥ 1.3                            FAIL ✗
+    PF ≥ 1.3                            PASS ✓
     Max DD < 15%                        PASS ✓
     Net PnL positive                    PASS ✓
     Avg winner > avg loser              PASS ✓
 
-  GATES PASSED: 3/6
+  GATES PASSED: 4/6
 ================================================================
 
   BACKTEST DIAGNOSIS
@@ -62,8 +62,8 @@
       all gates simultaneously
 
   WHAT V2 GETS RIGHT vs V1
-    Win Rate:  V1 45.3% → V2 42.9%  (+-2.4pp improvement)
-    Profit Factor: V1 0.77 → V2 1.24  (improvement)
+    Win Rate:  V1 45.3% → V2 50.0%  (+4.7pp improvement)
+    Profit Factor: V1 0.77 → V2 1.71  (improvement)
     Signal quality: 20-trader panel, MDP policy, and 6 safety rails
                     produce HIGHER-QUALITY signals than EMA-crossover alone.
     Trade frequency: Too low for $10K account — system designed for $100K+.

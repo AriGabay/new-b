@@ -365,6 +365,7 @@ class BacktestEngine:
         bars: dict[str, list[OHLCVBar]],
         verbose: bool = False,
         disable_time_stop: bool = False,
+        learning_db_path: str = "data/backtest_learning.db",
     ) -> BacktestResult:
         """
         Full pipeline bar-by-bar backtest using BtcBybitPaperRunner in simulation mode.
@@ -383,22 +384,22 @@ class BacktestEngine:
               bars_processed, trade_records, avg_winner_usd, avg_loser_usd.
         """
         import os
-        import tempfile
         from features.compute import FeatureComputer
-        from core.events import PositionCloseEvent
+        from core.events import PositionCloseEvent, PositionOpenEvent
         from runtime.runner import BtcBybitPaperRunner
 
         result = BacktestResult(config=self.config)
 
-        # Use a temporary journal DB so we don't pollute live data.
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-            db_path = tf.name
+        # Use the persistent learning DB (never temp — data is valuable).
+        db_path = learning_db_path
 
         trade_records: list[dict] = []
         running_max_dd: float = 0.0
         runner_ref: list = [None]       # mutable container for closure access
         current_bar: list = [None]      # the OHLCVBar being replayed right now
         entry_bar_times: dict = {}      # position_id → historical bar timestamp of entry
+        _learning_db_ref: list = [None]   # BacktestLearningDB; set after runner.setup()
+        _pending_verdicts: dict = {}       # packet_id → (verdicts, dir, regime, vol, ts)
 
         async def _on_close(event: PositionCloseEvent) -> None:
             nonlocal running_max_dd
@@ -446,6 +447,37 @@ class BacktestEngine:
                     if dd > running_max_dd:
                         running_max_dd = dd
 
+                # Task 3: backfill evaluator outcome into learning DB
+                _ldb = _learning_db_ref[0]
+                if _ldb is not None:
+                    _outcome = (
+                        "win" if _pnl_usd > 0
+                        else ("loss" if _pnl_usd < 0 else "breakeven")
+                    )
+                    _ldb.update_evaluator_outcomes(
+                        pos.position_id,
+                        _outcome,
+                        float(sig.pnl_r),
+                        _closed.isoformat(),
+                    )
+
+        async def _on_open(event: PositionOpenEvent) -> None:
+            """Flush buffered evaluator verdicts to the learning DB on position open."""
+            if not event.position:
+                return
+            pos = event.position
+            trade_id = pos.position_id
+            packet_id = getattr(pos, "packet_id", "") or ""
+            if packet_id and packet_id in _pending_verdicts:
+                verdicts, direction, regime, volatility, opened_at = (
+                    _pending_verdicts.pop(packet_id)
+                )
+                _ldb = _learning_db_ref[0]
+                if _ldb is not None:
+                    _ldb.insert_evaluator_verdicts(
+                        verdicts, trade_id, direction, regime, volatility, opened_at
+                    )
+
         bars_processed: int = 0
 
         # ── Time-stop override ────────────────────────────────────────────────
@@ -468,6 +500,68 @@ class BacktestEngine:
             runner_ref[0] = runner
 
             await runner.setup()
+
+            # ── Learning DB wiring ────────────────────────────────────────────
+            # Attach evaluator_performance table to the runner's DB connection and
+            # wire the verdict_sink so PanelDecisionGroup feeds us panel verdicts.
+            from backtest.learning_db import BacktestLearningDB
+            _jdb_conn = getattr(
+                getattr(runner._performance_journal, "_journal_db", None),
+                "_conn", None,
+            )
+            if _jdb_conn is not None:
+                _ldb = BacktestLearningDB(_jdb_conn)
+                _ldb.create_evaluator_performance_table()
+                _learning_db_ref[0] = _ldb
+
+                def _verdict_sink(
+                    verdicts: list, proposal, packet_id: str, fv
+                ) -> None:
+                    """Sync callback: buffer verdicts keyed by packet_id."""
+                    if not packet_id:
+                        return
+                    _dir = getattr(
+                        getattr(proposal, "direction", None),
+                        "value",
+                        str(getattr(proposal, "direction", "")),
+                    ).upper()
+                    _regime = getattr(fv, "btc_macro", "unknown") if fv else "unknown"
+                    _vol = (
+                        getattr(fv, "volatility_regime", "unknown")
+                        if fv else "unknown"
+                    )
+                    _ts = getattr(fv, "timestamp", None)
+                    _opened = (
+                        _ts.isoformat()
+                        if _ts is not None
+                        else datetime.now(timezone.utc).isoformat()
+                    )
+                    _pending_verdicts[packet_id] = (
+                        verdicts, _dir, _regime, _vol, _opened
+                    )
+
+                runner._panel_decision._verdict_sink = _verdict_sink
+                await runner._bus.subscribe(PositionOpenEvent, _on_open)
+
+                # Inject journal_extension into FinalDecisionGroup so its
+                # TransitionLogger is created and MDP transitions are logged.
+                # FinalDecisionGroup was created before _finalize_learning_wiring
+                # ran, so its _journal_extension is still None at this point.
+                _fdg = getattr(runner._panel_decision, "_decision_group", None)
+                if _fdg is not None and runner._journal_extension is not None:
+                    _fdg._journal_extension = runner._journal_extension
+                    logger.info(
+                        "BacktestEngine: FinalDecisionGroup journal_extension injected"
+                    )
+
+                logger.info(
+                    "BacktestEngine: learning DB wired — %s", db_path
+                )
+            else:
+                logger.warning(
+                    "BacktestEngine: JournalDB connection not available — "
+                    "learning DB not wired."
+                )
 
             # Override equity to match backtest config (runner defaults to $100k)
             init_eq = self.config.initial_equity
@@ -571,7 +665,7 @@ class BacktestEngine:
                 "trade_records":   trade_records,
                 "avg_winner_usd":  avg_winner,
                 "avg_loser_usd":   avg_loser,
-                "db_path":         db_path,
+                "learning_db_path": db_path,
             }
 
         finally:
@@ -580,10 +674,7 @@ class BacktestEngine:
             _exit_grp.BREAKEVEN_BARS   = _orig_be_bars
             if runner_ref[0] is not None:
                 await runner_ref[0].teardown()
-            try:
-                os.unlink(db_path)
-            except OSError:
-                pass
+            # NOTE: db_path is the persistent learning DB — do NOT delete it.
 
         logger.info(
             "BacktestEngine.run_full_pipeline: %d bars processed, %d trades, "

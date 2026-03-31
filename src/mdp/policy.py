@@ -33,13 +33,19 @@ from traders.panel_constants import (
 logger = logging.getLogger(__name__)
 
 # Rule thresholds (named constants for auditability)
-# Phase 11B: regime-adaptive thresholds replace hardcoded approval counts
-# Bases sourced from panel_constants.PANEL_REGIME_THRESHOLDS
+# Sweep-optimal: T=15 across all regimes (optimization_result.json)
+# T=14 was below breakeven — do not lower below 15
+# hc_offset=2 → HC requires min(20, 15+2)=17 approvals for high-conviction entry
+# defer_offset=-3 → DEFER fires at max(8, 15-3)=12 approvals
 _REGIME_THRESHOLDS = {
-    regime: {"base": base, "hc_offset": 3, "defer_offset": -3}
-    for regime, base in PANEL_REGIME_THRESHOLDS.items()
+    "bull":     {"base": 15, "hc_offset": 2, "defer_offset": -3},
+    "trending": {"base": 15, "hc_offset": 2, "defer_offset": -3},
+    "ranging":  {"base": 15, "hc_offset": 2, "defer_offset": -3},
+    "bear":     {"base": 15, "hc_offset": 2, "defer_offset": -3},
 }
-_DEFAULT_REGIME = {"base": PANEL_REGIME_THRESHOLDS.get("ranging", 12), "hc_offset": 3, "defer_offset": -3}
+# Sweep-optimal: T=15 across all regimes (optimization_result.json)
+# T=14 was below breakeven — do not lower below 15
+_DEFAULT_REGIME = {"base": PANEL_REGIME_THRESHOLDS.get("ranging", 15), "hc_offset": 2, "defer_offset": -3}
 
 # Task 11H: non-BTC symbols need tighter consensus (panel calibrated on BTC)
 _SYMBOL_THRESHOLD_OFFSET: dict[str, int] = PANEL_SYMBOL_THRESHOLD_OFFSET  # from panel_constants

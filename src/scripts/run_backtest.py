@@ -77,6 +77,7 @@ REPORT_FILE = os.path.join(
 TRADES_CSV       = os.path.join(_PROJECT_ROOT, "analysis", "backtest_trades.csv")
 TRADES_CSV_NO_TS = os.path.join(_PROJECT_ROOT, "analysis", "backtest_trades_no_ts.csv")
 EXPERIMENT_MD    = os.path.join(_PROJECT_ROOT, "analysis", "time_stop_experiment.md")
+LEARNING_DB = os.path.join(_PROJECT_ROOT, "data", "backtest_learning.db")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -270,6 +271,17 @@ def _parse_args() -> argparse.Namespace:
             "Runs the baseline WITH time stop first, then WITHOUT, and prints a "
             "side-by-side comparison saved to analysis/time_stop_experiment.md. "
             "Also exports analysis/backtest_trades_no_ts.csv."
+        ),
+    )
+    parser.add_argument(
+        "--extended",
+        action="store_true",
+        default=False,
+        dest="extended",
+        help=(
+            "Run on full available date range (Dec 2023 → Dec 2025, all 18,288 bars). "
+            "Maximizes learning data in a single run. "
+            "Example: python -m scripts.run_backtest --extended"
         ),
     )
     return parser.parse_args()
@@ -467,6 +479,7 @@ async def _run_iterations(
     bars: list[OHLCVBar],
     config: BacktestConfig,
     disable_time_stop: bool = False,
+    learning_db_path: str = LEARNING_DB,
 ) -> tuple[BacktestResult, dict, float, int]:
     """
     Run the full MDP-iteration loop and return the best result.
@@ -507,6 +520,7 @@ async def _run_iterations(
             {"BTCUSDT": bars},
             verbose=True,
             disable_time_stop=disable_time_stop,
+            learning_db_path=learning_db_path,
         )
         elapsed = time.perf_counter() - t0
 
@@ -700,10 +714,57 @@ def _save_comparison_md(content: str) -> None:
     print(f"✓ Comparison saved → {rel}")
 
 
+def _print_learning_db_summary(db_path: str) -> None:
+    """Query data/backtest_learning.db and print the learning data summary."""
+    if not os.path.exists(db_path):
+        print("\n⚠  Learning DB not found — no summary available.")
+        return
+    try:
+        from backtest.learning_db import BacktestLearningDB
+        ldb = BacktestLearningDB.from_path(db_path)
+        summary = ldb.get_summary()
+        ldb.close()
+    except Exception as exc:
+        print(f"\n⚠  Learning DB summary failed: {exc}")
+        return
+
+    stats = summary.get("evaluator_stats", [])
+
+    print("\n=== Learning DB Summary ===")
+    print(f"Trades recorded:        {summary.get('n_trades', 0)}")
+    print(f"MDP transitions logged: {summary.get('n_mdp', 0)}")
+    print(f"Evaluator verdicts:     {summary.get('n_verdicts', 0)}")
+    print(f"Evaluators tracked:     {summary.get('n_unique', 0)} unique")
+
+    if not stats:
+        print("\n  (No evaluator verdict outcomes yet — run a backtest first)")
+        return
+
+    print()
+    print("Top 5 evaluators by approval win rate:")
+    for i, row in enumerate(stats[:5], 1):
+        approvals = row.get("approvals", 0)
+        wins = int(row.get("wins", 0) or 0)
+        wr = wins / approvals * 100 if approvals > 0 else 0.0
+        print(f"  {i}. {row['evaluator_name']:<38}  approvals={approvals}  wins={wins}  WR={wr:.0f}%")
+
+    print()
+    bottom = stats[-5:] if len(stats) > 5 else list(reversed(stats))
+    if len(stats) > 5:
+        bottom = list(reversed(stats[-5:]))
+    print("Bottom 5 evaluators by approval win rate:")
+    for i, row in enumerate(bottom, 1):
+        approvals = row.get("approvals", 0)
+        wins = int(row.get("wins", 0) or 0)
+        wr = wins / approvals * 100 if approvals > 0 else 0.0
+        print(f"  {i}. {row['evaluator_name']:<38}  approvals={approvals}  wins={wins}  WR={wr:.0f}%")
+
+
 async def run_backtest(
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
     no_time_stop: bool = False,
+    extended: bool = False,
 ) -> None:
     logger.info("=" * 64)
     logger.info("  FULL PIPELINE BACKTEST  —  v2")
@@ -727,7 +788,11 @@ async def run_backtest(
     )
 
     # ── Date filtering ────────────────────────────────────────────────────────
-    bars = _filter_bars(all_bars, start_dt, end_dt)
+    if extended:
+        bars = all_bars
+        logger.info("--extended: using all %d bars (no date filter)", len(bars))
+    else:
+        bars = _filter_bars(all_bars, start_dt, end_dt)
     if not bars:
         logger.error(
             "No bars found in the requested date range (%s → %s). "
@@ -764,7 +829,7 @@ async def run_backtest(
         logger.info("  PASS 1/2 — with time stop (baseline)")
         logger.info("=" * 64)
         r_ts, m_ts, elapsed_ts, iter_ts = await _run_iterations(
-            bars, config, disable_time_stop=False
+            bars, config, disable_time_stop=False, learning_db_path=LEARNING_DB
         )
         _export_trades_csv(m_ts.get("trade_records", []), TRADES_CSV)
         report_ts = _build_report(bars, r_ts, m_ts, elapsed_ts, iter_ts)
@@ -773,7 +838,7 @@ async def run_backtest(
         logger.info("  PASS 2/2 — without time stop")
         logger.info("=" * 64)
         r_no, m_no, elapsed_no, iter_no = await _run_iterations(
-            bars, config, disable_time_stop=True
+            bars, config, disable_time_stop=True, learning_db_path=LEARNING_DB
         )
         _export_trades_csv(m_no.get("trade_records", []), TRADES_CSV_NO_TS)
         report_no = _build_report(bars, r_no, m_no, elapsed_no, iter_no)
@@ -788,11 +853,12 @@ async def run_backtest(
         with open(REPORT_FILE, "w", encoding="utf-8") as f:
             f.write(report_no + "\n")
         logger.info("Report (no-time-stop) saved → %s", REPORT_FILE)
+        _print_learning_db_summary(LEARNING_DB)
 
     else:
         # ── Normal single run ─────────────────────────────────────────────────
         best_result, best_meta, best_elapsed, best_iter = await _run_iterations(
-            bars, config, disable_time_stop=False
+            bars, config, disable_time_stop=False, learning_db_path=LEARNING_DB
         )
 
         report = _build_report(bars, best_result, best_meta, best_elapsed, best_iter)
@@ -805,6 +871,7 @@ async def run_backtest(
 
         trade_records = best_meta.get("trade_records", [])
         _export_trades_csv(trade_records, TRADES_CSV)
+        _print_learning_db_summary(LEARNING_DB)
 
 
 if __name__ == "__main__":
@@ -815,4 +882,5 @@ if __name__ == "__main__":
         start_dt=_start,
         end_dt=_end,
         no_time_stop=_args.no_time_stop,
+        extended=_args.extended,
     ))

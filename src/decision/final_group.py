@@ -19,7 +19,7 @@ Hard safety rails (non-overridable — override MDP if any triggered):
   3. proposal.r_r_ratio < 1.5 → always hold (bad R:R)
   4. proposal.setup_quality == "invalid" → always hold
   5. regime.btc_macro == "bear" AND proposal.direction == "long" → always hold
-  6. volatility_regime == "high" AND approve_count < 14 → hold
+  6. volatility_regime == "high" AND approve_count < 16 → hold (Rail6=16, sweep-optimal)
 
 MDP actions → decision mapping:
   ENTER_SMALL / ENTER_MEDIUM / ENTER_HIGH_CONVICTION → "enter" (full/scaled size)

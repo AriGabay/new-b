@@ -76,6 +76,7 @@ class PanelDecisionGroup(BaseGroup):
         self._trace_logger = None
         self._panel = None
         self._decision_group = None
+        self._verdict_sink = None          # Optional sync callback for backtest learning
 
     def set_feature_cache(self, cache: dict) -> None:
         """Inject reference to MarketDataGroup's feature cache dict."""
@@ -209,6 +210,13 @@ class PanelDecisionGroup(BaseGroup):
                 )
             except Exception as exc:
                 logger.warning("PanelDecisionGroup: trace logging failed: %s", exc)
+
+        # 5b. Verdict sink — captured by BacktestEngine for evaluator_performance table.
+        if self._verdict_sink is not None:
+            try:
+                self._verdict_sink(panel_result.verdicts, proposal, packet_id, fv)
+            except Exception as exc:
+                logger.debug("PanelDecisionGroup: _verdict_sink failed: %s", exc)
 
         logger.info(
             "PanelDecisionGroup: %s %s | approve=%d/20 avg=%.1f | decision=%s | rails=%s",

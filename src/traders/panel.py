@@ -71,6 +71,8 @@ class TraderEvaluatorPanel:
     Hard reject: < 8 approve → "hold" (force no trade)
     """
 
+    # Sweep-optimal: T=15 across all regimes (optimization_result.json)
+    # T=14 was below breakeven — do not lower below 15
     APPROVE_THRESHOLD = PANEL_APPROVE_THRESHOLD          # default fallback
     MIN_AVG_SCORE = PANEL_MIN_AVG_SCORE                  # need avg score >= threshold
     AVG_SCORE_THRESHOLD = PANEL_MIN_AVG_SCORE            # alias (Phase 6.4 test compatibility)
