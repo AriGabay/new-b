@@ -70,6 +70,11 @@ from core.state import RiskState, SystemState
 logger = logging.getLogger(__name__)
 
 DEFAULT_RISK_FRACTION  = Decimal("0.01")   # 1% per trade (used for R tracking)
+
+# Profit target R-multiple used when computing target_price at order creation.
+# Raised to 3R to improve profit factor (was 2R, PF was 0.82)
+TARGET_R_MULTIPLIER    = Decimal("3.0")    # target = entry ± TARGET_R × stop_dist
+
 # Leveraged futures risk limits — calibrated for 5×–35× leverage model
 # where a single 1R loss can be 10–18% of equity.
 DAILY_LOSS_LIMIT       = -0.15             # −15% daily PnL max
@@ -469,18 +474,25 @@ class RiskLeverageGroup(BaseGroup):
 
         equity = self.state.portfolio.equity
 
-        # Place stop using ATR
+        # Place stop using ATR — volatility-adaptive multiplier (2.0× default, 2.5× high-vol)
         atr14 = self.state.regime.atr14 if self.state.regime.atr14 > 0 else Decimal("1000")
+        atr14_vs_sma20 = float(getattr(self.state.regime, "atr14_vs_sma20", 1.0))
+        atr14_sma20 = (
+            atr14 / Decimal(str(atr14_vs_sma20))
+            if atr14_vs_sma20 > 0 else None
+        )
         placer = ATRStopPlacer()
-        stop_price = placer.compute(proposal.entry_price, proposal.direction, atr14)
+        stop_price = placer.compute(
+            proposal.entry_price, proposal.direction, atr14, atr14_sma20=atr14_sma20
+        )
 
         # Compute target: 3× stop distance (3:1 R:R minimum)
         stop_dist = abs(proposal.entry_price - stop_price)
         stop_dist_pct = float(stop_dist / proposal.entry_price) if proposal.entry_price > 0 else 0.025
         if proposal.direction == Direction.LONG:
-            target_price = proposal.entry_price + stop_dist * Decimal("3")
+            target_price = proposal.entry_price + stop_dist * TARGET_R_MULTIPLIER
         else:
-            target_price = proposal.entry_price - stop_dist * Decimal("3")
+            target_price = proposal.entry_price - stop_dist * TARGET_R_MULTIPLIER
 
         # Compute leverage from setup quality and conditions
         leverage = self._compute_leverage(proposal, stop_dist_pct)

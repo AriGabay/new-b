@@ -11,11 +11,14 @@ R-multiple method:
   size_usd   = size_base × entry_price
   size_usd   = min(size_usd, equity × max_position_fraction)
 
-ATR stop placement:
-  LONG:  stop = entry - 1.5 × ATR14
+ATR stop placement (volatility-adaptive):
+  Default:   stop = entry ± 2.0 × ATR14
+  High-vol:  stop = entry ± 2.5 × ATR14  (when ATR14 > 1.5 × ATR14_SMA20)
+
+  LONG:  stop = entry - multiplier × ATR14
          If stop falls on round number (e.g., $10,000), shift +0.5× ATR14
          below the round number to avoid stop-hunt clusters.
-  SHORT: stop = entry + 1.5 × ATR14
+  SHORT: stop = entry + multiplier × ATR14
          If stop falls on round number, shift +0.5× ATR14 above.
 
 Source: /docs/risk_framework/risk_contract.md
@@ -28,19 +31,25 @@ from typing import Optional
 
 from core.schemas import Direction
 
-ATR_STOP_MULTIPLIER     = Decimal("1.5")
-ROUND_NUMBER_SHIFT      = Decimal("0.5")    # × ATR14 away from round number
-DEFAULT_RISK_FRACTION   = Decimal("0.01")   # 1% of equity per R
-MAX_POSITION_FRACTION   = Decimal("0.10")   # 10% of equity max single position
+ATR_STOP_MULTIPLIER          = Decimal("2.0")   # default (calm / normal volatility)
+ATR_STOP_MULTIPLIER_HIGH_VOL = Decimal("2.5")   # elevated-volatility regime
+ATR_HIGH_VOL_RATIO           = Decimal("1.5")   # ATR14 / ATR14_SMA20 threshold
+ROUND_NUMBER_SHIFT           = Decimal("0.5")   # × ATR14 away from round number
+DEFAULT_RISK_FRACTION        = Decimal("0.01")  # 1% of equity per R
+MAX_POSITION_FRACTION        = Decimal("0.10")  # 10% of equity max single position
 
 
 class ATRStopPlacer:
     """
-    Compute ATR-based stop price with anti-round-number protection.
+    Compute ATR-based stop price with anti-round-number protection and
+    volatility-adaptive multiplier selection.
 
     Usage:
         placer = ATRStopPlacer()
+        # Basic (no vol context):
         stop_price = placer.compute(entry_price, direction, atr14)
+        # Adaptive (auto-widens stop in high-vol conditions):
+        stop_price = placer.compute(entry_price, direction, atr14, atr14_sma20=sma20)
     """
 
     def compute(
@@ -49,20 +58,38 @@ class ATRStopPlacer:
         direction: Direction,
         atr14: Decimal,
         atr_multiplier: Decimal = ATR_STOP_MULTIPLIER,
+        atr14_sma20: Optional[Decimal] = None,
     ) -> Decimal:
         """
-        Compute stop price. Applies round-number shift if needed.
+        Compute stop price. Applies volatility-adaptive multiplier and
+        round-number shift where needed.
 
-        LONG:  raw_stop = entry - atr_multiplier × ATR14
-        SHORT: raw_stop = entry + atr_multiplier × ATR14
+        Multiplier selection (when atr14_sma20 is provided):
+          ATR14 > 1.5 × ATR14_SMA20  →  2.5× ATR14  (high-volatility)
+          otherwise                   →  2.0× ATR14  (default)
+
+        When atr14_sma20 is None the caller-supplied atr_multiplier is used
+        (defaults to ATR_STOP_MULTIPLIER = 2.0).
+
+        LONG:  raw_stop = entry - effective_multiplier × ATR14
+        SHORT: raw_stop = entry + effective_multiplier × ATR14
 
         Round-number check: if raw_stop is within 0.2 × ATR14 of any
         round number (ending in 000 or 500 for BTC-scale), shift away.
         """
-        if direction == Direction.LONG:
-            raw_stop = entry_price - atr_multiplier * atr14
+        # --- Determine effective multiplier ---
+        if atr14_sma20 is not None and atr14_sma20 > Decimal("0"):
+            if atr14 > ATR_HIGH_VOL_RATIO * atr14_sma20:
+                effective_mult = ATR_STOP_MULTIPLIER_HIGH_VOL
+            else:
+                effective_mult = ATR_STOP_MULTIPLIER
         else:
-            raw_stop = entry_price + atr_multiplier * atr14
+            effective_mult = atr_multiplier
+
+        if direction == Direction.LONG:
+            raw_stop = entry_price - effective_mult * atr14
+        else:
+            raw_stop = entry_price + effective_mult * atr14
 
         if self._is_near_round_number(raw_stop, atr14):
             if direction == Direction.LONG:

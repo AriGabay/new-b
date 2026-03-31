@@ -25,31 +25,34 @@ import logging
 
 from mdp.state import MDPState
 from mdp.actions import MDPAction
+from traders.panel_constants import (
+    PANEL_REGIME_THRESHOLDS,
+    PANEL_SYMBOL_THRESHOLD_OFFSET,
+)
 
 logger = logging.getLogger(__name__)
 
 # Rule thresholds (named constants for auditability)
 # Phase 11B: regime-adaptive thresholds replace hardcoded approval counts
+# Bases sourced from panel_constants.PANEL_REGIME_THRESHOLDS
 _REGIME_THRESHOLDS = {
-    "bull":     {"base": 14, "hc_offset": 3, "defer_offset": -3},
-    "trending": {"base": 14, "hc_offset": 3, "defer_offset": -3},
-    "ranging":  {"base": 15, "hc_offset": 3, "defer_offset": -3},
-    "bear":     {"base": 15, "hc_offset": 3, "defer_offset": -3},
+    regime: {"base": base, "hc_offset": 3, "defer_offset": -3}
+    for regime, base in PANEL_REGIME_THRESHOLDS.items()
 }
-_DEFAULT_REGIME = {"base": 15, "hc_offset": 3, "defer_offset": -3}
+_DEFAULT_REGIME = {"base": PANEL_REGIME_THRESHOLDS.get("ranging", 12), "hc_offset": 3, "defer_offset": -3}
 
 # Task 11H: non-BTC symbols need tighter consensus (panel calibrated on BTC)
-_SYMBOL_THRESHOLD_OFFSET: dict[str, int] = {"ETHUSDT": 1, "BNBUSDT": 1}
+_SYMBOL_THRESHOLD_OFFSET: dict[str, int] = PANEL_SYMBOL_THRESHOLD_OFFSET  # from panel_constants
 
 HC_MIN_AVG_SCORE    = 7.0
 HC_MAX_STD_DEV      = 1.5
 HC_MAX_DRAWDOWN     = 0.10
 HC_MIN_WIN_RATE     = 0.50
 
-MED_MIN_AVG_SCORE   = 5.8
+MED_MIN_AVG_SCORE   = 5.5
 MED_MIN_RR          = 2.0
 
-SMALL_MIN_AVG_SCORE = 5.8
+SMALL_MIN_AVG_SCORE = 5.5
 
 DEFER_MIN_AVG_SCORE = 5.5
 DEFER_MIN_COMPOSITE = 0.65

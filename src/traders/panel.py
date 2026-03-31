@@ -8,6 +8,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from core.setup_packet import BTCSetupPacket
+from traders.panel_constants import (
+    PANEL_APPROVE_THRESHOLD,
+    PANEL_MIN_AVG_SCORE,
+    PANEL_REGIME_THRESHOLDS,
+    PANEL_SYMBOL_THRESHOLD_OFFSET,
+)
 from traders.evaluators import (
     TraderVerdict,
     TrendFollowingEvaluator,
@@ -60,17 +66,17 @@ class TraderEvaluatorPanel:
     """
     Orchestrates all 20 trader evaluators.
 
-    Decision threshold: >= 11/20 approve AND avg_score >= 5.8 → "enter"
+    Decision threshold: >= 12/20 approve AND avg_score >= 5.5 → "enter"
     Soft threshold: 8-10 approve → "hold"
     Hard reject: < 8 approve → "hold" (force no trade)
     """
 
-    APPROVE_THRESHOLD = 15   # default fallback (optimized in Phase 5)
-    MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
-    AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
-    _REGIME_THRESHOLDS = {"bull": 14, "trending": 14, "ranging": 15, "bear": 15}
+    APPROVE_THRESHOLD = PANEL_APPROVE_THRESHOLD          # default fallback
+    MIN_AVG_SCORE = PANEL_MIN_AVG_SCORE                  # need avg score >= threshold
+    AVG_SCORE_THRESHOLD = PANEL_MIN_AVG_SCORE            # alias (Phase 6.4 test compatibility)
+    _REGIME_THRESHOLDS = PANEL_REGIME_THRESHOLDS         # per-regime approval counts
     # Task 11H: non-BTC symbols require tighter consensus (panel calibrated on BTC)
-    _SYMBOL_THRESHOLD_OFFSET: dict = {"ETHUSDT": 1, "BNBUSDT": 1}
+    _SYMBOL_THRESHOLD_OFFSET: dict = PANEL_SYMBOL_THRESHOLD_OFFSET
 
     def __init__(self) -> None:
         self._evaluators = [

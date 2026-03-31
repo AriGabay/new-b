@@ -5,7 +5,7 @@ Responsibilities:
   - Monitor all open positions against each new bar.
   - Check stop loss (fixed and trailing), target, time stop.
   - Apply partial profit taking at +1R (30%) and +2R (20%).
-  - Apply breakeven time stop if bars_held >= 24 and not at +0.3R.
+  - Apply breakeven time stop if bars_held >= 48 and not at +0.3R.
   - Emit ExitSignal when any exit condition is triggered.
   - Update trailing stop on favorable price movement.
   - Publish PositionCloseEvent (with reward_signal) via EventBus.
@@ -20,15 +20,16 @@ Phase 2 deliverable: Stop loss exit, target exit, time stop exit.
 Exit priority (first condition triggered wins):
   1. Hard stop loss   — price crosses stop_price (LONG: low ≤ stop; SHORT: high ≥ stop)
   2. Target reached   — price crosses target_price (LONG: high ≥ target; SHORT: low ≤ target)
-  3. Trailing stop    — trailing_stop_price set after +0.75R favorable move
-  4. Time stop        — bars_held ≥ MAX_BARS_TO_HOLD (72 bars = 3 days on 1h)
+  3. Trailing stop    — trailing_stop_price set after +1.5R favorable move
+  4. Time stop        — bars_held ≥ MAX_BARS_TO_HOLD (120 bars = 5 days on 1h)
   5. Signal reversal  — opposing ChartPattern/Indicator signal (advisory, not forced)
 
 Trailing stop rules:
-  - Activate when position reaches +0.75R (favorable).
+  - Activate when position reaches +1.5R (favorable).
   - Initial trail distance: 1.5×ATR14.
-  - Tighten to 1.0×ATR14 after +1.5R.
-  - Tighten to 0.6×ATR14 after +2.5R.
+  - Tighten to 1.0×ATR14 after +2.0R.
+  - Tighten to 0.8×ATR14 after +2.5R.
+  - At +3.0R: apply a stop floor at entry + 0.5R (trade must never close as a loss).
   - Never widen trailing stop.
 
 Partial profit taking:
@@ -37,7 +38,7 @@ Partial profit taking:
   - Remaining 50% rides trailing stop.
 
 Breakeven time stop:
-  - At bars_held >= 24 AND pnl_r < +0.3R: move stop to entry_price (breakeven).
+  - At bars_held >= 48 AND pnl_r < +0.3R: move stop to entry_price (breakeven).
   - Does not exit — just tightens stop.
 
 Source: /docs/agent_registry/group_registry.md (EXIT entry)
@@ -62,15 +63,17 @@ from core.state import SystemState
 
 logger = logging.getLogger(__name__)
 
-MAX_BARS_TO_HOLD = 72   # 72 bars = 3 days on 1h (restored from 36)
+MAX_BARS_TO_HOLD = 120  # 120 bars = 5 days on 1h — BTC trends on 1H typically take 3-5 days to develop
 
 # Trailing stop activation and tightening thresholds (in R-multiples)
-TRAIL_ACTIVATE_R     = 1.0   # activate trailing stop at +1.0R (from 0.50 — give winners room)
+TRAIL_ACTIVATE_R     = 1.5   # activate trailing stop at +1.5R (raised from 1.0 — give winners more room)
 TRAIL_ATR_INITIAL    = Decimal("1.5")  # initial trail distance ×ATR14 (restored from 0.6)
 TRAIL_ATR_TIGHT_1    = Decimal("1.0")  # tighten to ×ATR14 after +1.5R (restored from 0.4)
-TRAIL_ATR_TIGHT_2    = Decimal("0.6")  # tighten further after +2.5R (restored from 0.3)
-TRAIL_TIGHT_1_R      = 1.5   # R-multiple at which first tightening applies
+TRAIL_ATR_TIGHT_2    = Decimal("0.8")  # tighten further after +2.5R
+TRAIL_TIGHT_1_R      = 2.0   # R-multiple at which first tightening applies (raised from 1.5)
 TRAIL_TIGHT_2_R      = 2.5   # R-multiple at which second tightening applies
+TRAIL_TIGHT_3_R      = 3.0   # R-multiple at which stop floor is applied
+TRAIL_FLOOR_3R_R     = Decimal("0.5")  # floor = entry ± 0.5×R at +3R (never close as a loss)
 
 # Partial profit taking thresholds
 PARTIAL_1_R          = 1.0   # take 30% off at +1R
@@ -79,7 +82,7 @@ PARTIAL_2_R          = 2.0   # take 20% off at +2R
 PARTIAL_2_FRACTION   = 0.20
 
 # Breakeven time stop
-BREAKEVEN_BARS       = 24    # apply breakeven stop after 24 bars (restored from 12)
+BREAKEVEN_BARS       = 48    # 48 bars = 2 days on 1h — BTC trends on 1H typically take 3-5 days to develop
 BREAKEVEN_MIN_R      = 0.3   # minimum R-multiple to avoid breakeven stop
 
 
@@ -163,7 +166,7 @@ class ExitGroup(BaseGroup):
         4. Time stop (bars_held >= MAX_BARS_TO_HOLD)
 
         Before checking, update trailing stop and apply partial profit taking.
-        Breakeven time stop: if bars_held >= BREAKEVEN_BARS and pnl_r < BREAKEVEN_MIN_R,
+        Breakeven time stop: if bars_held >= BREAKEVEN_BARS (48) and pnl_r < BREAKEVEN_MIN_R,
         tighten stop to entry_price (no forced exit — just stops a drawback).
 
         Note: entry-bar skipping is handled by _check_exits (skip_ids).
@@ -394,14 +397,20 @@ class ExitGroup(BaseGroup):
 
     def _update_trailing_stop(self, position: Position, features: FeatureVector) -> Optional[Decimal]:
         """
-        Activate trailing stop once position reaches +0.75R.
+        Activate trailing stop once position reaches +1.0R.
 
         Trail distance is tightened as trade progresses:
           - Default:      1.5×ATR14
-          - After +1.5R:  1.0×ATR14
-          - After +2.5R:  0.6×ATR14
+          - After +1.5R:  1.0×ATR14  (TRAIL_ATR_TIGHT_1)
+          - After +2.5R:  0.8×ATR14  (TRAIL_ATR_TIGHT_2)
 
-        Never widens trailing stop (ratchet rule).
+        Stop floor at +3.0R:
+          After the ATR candidate is computed, if current_r >= TRAIL_TIGHT_3_R the
+          stop is clamped to at least entry + 0.5×original_R (LONG) or at most
+          entry − 0.5×original_R (SHORT).  This guarantees that a trade which has
+          reached +3R can never be closed at a loss.
+
+        Never widens trailing stop (ratchet rule applied last).
         """
         if position.r_amount <= 0:
             return None
@@ -424,7 +433,16 @@ class ExitGroup(BaseGroup):
                 atr_mult = TRAIL_ATR_INITIAL
 
             candidate = features.close - atr_mult * features.atr14
-            new_trail = candidate  # do NOT floor to breakeven — _apply_breakeven_stop() handles that
+
+            # +3R floor: stop must never drop below entry + 0.5×original_R
+            if current_r >= TRAIL_TIGHT_3_R and position.position_size_usd > 0:
+                orig_r_dist = (
+                    position.r_amount * position.entry_price / position.position_size_usd
+                )
+                floor_price = position.entry_price + TRAIL_FLOOR_3R_R * orig_r_dist
+                candidate = max(candidate, floor_price)
+
+            new_trail = candidate
 
             if position.trailing_stop_price is None or new_trail > position.trailing_stop_price:
                 return new_trail
@@ -447,7 +465,16 @@ class ExitGroup(BaseGroup):
                 atr_mult = TRAIL_ATR_INITIAL
 
             candidate = features.close + atr_mult * features.atr14
-            new_trail = candidate  # do NOT ceil to breakeven — _apply_breakeven_stop() handles that
+
+            # +3R floor: stop must never rise above entry − 0.5×original_R
+            if current_r >= TRAIL_TIGHT_3_R and position.position_size_usd > 0:
+                orig_r_dist = (
+                    position.r_amount * position.entry_price / position.position_size_usd
+                )
+                floor_price = position.entry_price - TRAIL_FLOOR_3R_R * orig_r_dist
+                candidate = min(candidate, floor_price)
+
+            new_trail = candidate
 
             if position.trailing_stop_price is None or new_trail < position.trailing_stop_price:
                 return new_trail

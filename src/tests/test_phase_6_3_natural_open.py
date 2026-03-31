@@ -347,33 +347,33 @@ class TestPhase63PanelRegressions:
 
     def test_panel_threshold_unchanged(self):
         """
-        Panel threshold must remain 15/20 approvals, avg ≥ 6.5.
-        Phase 6.3 did not and must not change this.
+        Panel threshold lowered to 12/20 approvals, avg ≥ 5.5 (Task 11).
+        Phase 6.3 documents the change; regression lock updated here.
         """
-        APPROVE_THRESHOLD = 15
-        MIN_AVG_SCORE = 6.5
+        APPROVE_THRESHOLD = 12
+        MIN_AVG_SCORE = 5.5
         TRADER_COUNT = 20
 
-        assert APPROVE_THRESHOLD == 15, "APPROVE_THRESHOLD must remain 15"
-        assert MIN_AVG_SCORE == 6.5, "MIN_AVG_SCORE must remain 6.5"
+        assert APPROVE_THRESHOLD == 12, "APPROVE_THRESHOLD must remain 12"
+        assert MIN_AVG_SCORE == 5.5, "MIN_AVG_SCORE must remain 5.5"
         assert TRADER_COUNT == 20, "TRADER_COUNT must remain 20"
 
     def test_v2_best_panel_result(self):
         """
         Phase 6.3 verified result: V2 achieves 14/20 approve, avg=6.850.
+        With T=12, V2 now exceeds threshold and enters.
         This is the regression lock — any change to evaluator code must update this.
         """
         observed_v2_approve = 14
         observed_v2_avg = 6.850
         observed_v2_rec = "enter"
 
-        APPROVE_THRESHOLD = 15
-        MIN_AVG_SCORE = 6.5
+        APPROVE_THRESHOLD = 12
+        MIN_AVG_SCORE = 5.5
 
-        # Phase 5: v2 observation (14 approvals) no longer meets T=15.
-        # The test documents the gap: 1 approval short of new threshold.
-        assert observed_v2_approve >= APPROVE_THRESHOLD - 1, (
-            f"V2 approve count {observed_v2_approve} should be within 1 of threshold {APPROVE_THRESHOLD}."
+        # V2 (14 approvals) now exceeds T=12 threshold.
+        assert observed_v2_approve >= APPROVE_THRESHOLD, (
+            f"V2 approve count {observed_v2_approve} must meet threshold {APPROVE_THRESHOLD}."
         )
         assert observed_v2_avg >= MIN_AVG_SCORE, (
             f"V2 avg score {observed_v2_avg} must reach min avg {MIN_AVG_SCORE}."
@@ -384,22 +384,22 @@ class TestPhase63PanelRegressions:
 
     def test_v1_best_panel_result_still_13(self):
         """
-        Regression: V1 best panel must remain at 13/20 (hold).
-        Phase 6.3 must not accidentally change V1 behavior.
+        Regression: V1 best panel remains at 13/20 approve.
+        With T=12, V1 (13 approvals) now meets threshold and enters.
+        Task 11 intentionally lowers threshold to increase trade frequency.
         """
         observed_v1_approve = 13
         observed_v1_avg = 6.700
-        observed_v1_rec = "hold"
 
-        APPROVE_THRESHOLD = 15
+        APPROVE_THRESHOLD = 12
 
         panel_enters_v1 = observed_v1_approve >= APPROVE_THRESHOLD
-        assert not panel_enters_v1, (
-            f"V1 must remain at 13/20 (hold). "
-            f"If V1 now reaches threshold, a regression has occurred."
+        assert panel_enters_v1, (
+            f"V1 (13/20 approve) now meets T=12 and should enter. "
+            f"approve={observed_v1_approve}, threshold={APPROVE_THRESHOLD}."
         )
-        assert observed_v1_rec == "hold", (
-            f"V1 recommendation must remain 'hold', got '{observed_v1_rec}'."
+        assert observed_v1_avg >= 5.5, (
+            f"V1 avg score {observed_v1_avg} must reach min avg 5.5."
         )
 
     def test_v2_composite_score_exceeds_v1(self):
@@ -588,8 +588,8 @@ class TestPhase63NaturalOpenRuntime:
         assert len(approved_events) >= 1
         event = approved_events[0]
 
-        assert event.panel_avg_score >= 5.8, (
-            f"PanelApprovedProposalEvent avg_score must be ≥ 5.8, "
+        assert event.panel_avg_score >= 5.5, (
+            f"PanelApprovedProposalEvent avg_score must be ≥ 5.5, "
             f"got {event.panel_avg_score:.3f}."
         )
 

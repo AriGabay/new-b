@@ -115,6 +115,10 @@ def _get_all_fixtures():
         get_all_phase63_fixtures,
         get_all_phase64_fixtures,
     )
+    # Task 7: market-conditions fixtures (downtrend, ranging, news rejection)
+    from validation.fixtures.btc_downtrend_short_setup import get_all_btc_downtrend_fixtures
+    from validation.fixtures.btc_ranging_market import get_all_btc_ranging_market_fixtures
+    from validation.fixtures.btc_news_rejection import get_all_btc_news_rejection_fixtures
 
     all_fixtures = []
     all_fixtures.extend(get_all_replay_fixtures())
@@ -122,6 +126,9 @@ def _get_all_fixtures():
     all_fixtures.extend(get_all_phase62_fixtures())
     all_fixtures.extend(get_all_phase63_fixtures())
     all_fixtures.extend(get_all_phase64_fixtures())
+    all_fixtures.extend(get_all_btc_downtrend_fixtures())
+    all_fixtures.extend(get_all_btc_ranging_market_fixtures())
+    all_fixtures.extend(get_all_btc_news_rejection_fixtures())
     return all_fixtures
 
 
@@ -329,3 +336,69 @@ class TestBaselineReport:
         print(f"Entering: {entering}  |  Holding: {holding}")
         print(f"Time stop threshold: 20 bars (20 hours)")
         print("=" * 110)
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — market-conditions fixtures: baseline lock
+# ---------------------------------------------------------------------------
+
+class TestBaselineDowntrendShortSetup:
+    """btc_downtrend_short_setup_v1: death cross, bearish engulfing, no entry."""
+
+    def test_downtrend_short_runs_without_error(self):
+        r = _get_baseline("btc_downtrend_short_setup_v1")
+        assert r.bar_count == 340
+
+    def test_downtrend_short_bar_count(self):
+        r = _get_baseline("btc_downtrend_short_setup_v1")
+        assert r.bar_count == 340
+
+    def test_downtrend_short_no_positions_opened(self):
+        """No natural entry expected (composite_score ceiling 0.4875 < 0.50)."""
+        r = _get_baseline("btc_downtrend_short_setup_v1")
+        assert r.position_opens == 0, (
+            f"Expected 0 opens (score ceiling), got {r.position_opens}"
+        )
+
+
+class TestBaselineRangingMarket45k:
+    """btc_ranging_market_45k_v1: sideways ±3%, no entry."""
+
+    def test_ranging_market_runs_without_error(self):
+        r = _get_baseline("btc_ranging_market_45k_v1")
+        assert r.bar_count == 200
+
+    def test_ranging_market_bar_count(self):
+        r = _get_baseline("btc_ranging_market_45k_v1")
+        assert r.bar_count == 200
+
+    def test_ranging_market_no_positions_opened(self):
+        """Ranging market must not fire any position opens."""
+        r = _get_baseline("btc_ranging_market_45k_v1")
+        assert r.position_opens == 0, (
+            f"Ranging market opened {r.position_opens} positions, expected 0"
+        )
+
+
+class TestBaselineNewsRejection:
+    """btc_news_rejection_v1: impulse cluster, no entry."""
+
+    def test_news_rejection_runs_without_error(self):
+        r = _get_baseline("btc_news_rejection_v1")
+        assert r.bar_count == 320
+
+    def test_news_rejection_bar_count(self):
+        r = _get_baseline("btc_news_rejection_v1")
+        assert r.bar_count == 320
+
+    def test_news_rejection_pipeline_runs_without_crash(self):
+        """Pipeline must process all 320 bars without error.
+
+        Note: entries MAY fire during the news impulse cluster because
+        NewsMacroGroup (macro-event gate) is EXCLUDED from BtcBybitPaperRunner.
+        This is a documented pipeline gap — not a regression failure.
+        """
+        r = _get_baseline("btc_news_rejection_v1")
+        assert r.bar_count == 320
+        # position_opens is recorded but not asserted: known gap means entries
+        # can fire on extreme impulse bars without a macro-event suppressor.

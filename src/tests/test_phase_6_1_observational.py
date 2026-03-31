@@ -463,44 +463,45 @@ class TestPanelEvidence:
     """
 
     def test_panel_thresholds_are_strict(self):
-        """Panel thresholds: APPROVE_THRESHOLD=15, MIN_AVG_SCORE=6.5."""
-        # This test reads from the runtime policy config — it asserts the values
-        # are what Phase 6.1 was run against
+        """Panel thresholds: APPROVE_THRESHOLD=12, MIN_AVG_SCORE=5.5 (Task 11)."""
+        # This test reads from the runtime policy config — asserts current values
         try:
             from groups.panel_decision_group import PanelDecisionGroup
             # Try to access threshold constants
             thresh = getattr(PanelDecisionGroup, "APPROVE_THRESHOLD", None)
             min_avg = getattr(PanelDecisionGroup, "MIN_AVG_SCORE", None)
             if thresh is not None:
-                assert thresh == 14, f"Expected APPROVE_THRESHOLD=15, got {thresh}"
+                assert thresh == 12, f"Expected APPROVE_THRESHOLD=12, got {thresh}"
             if min_avg is not None:
-                assert min_avg == 6.5, f"Expected MIN_AVG_SCORE=6.5, got {min_avg}"
+                assert min_avg == 5.5, f"Expected MIN_AVG_SCORE=5.5, got {min_avg}"
         except ImportError:
             pytest.skip("PanelDecisionGroup not importable in test environment")
 
     def test_best_observed_panel_score_is_below_threshold(self):
         """
         The best natural proposal in Phase 6.1 scored 12/20 approvals, avg 6.35.
-        This was below the required 14/20 + avg 6.5. Encode this as a regression.
+        With the original threshold of 15/20 (Phase 6.1 context) this was a hold.
+        Task 11 lowered the threshold to 12/20 + avg 5.5; the historical Phase 6.1
+        best score (12/20, avg 6.35) would now meet both criteria.
+        Encode the Phase 6.1 raw evidence as regression constants.
         """
-        # Phase 6.1 evidence: best_approvals=12, best_avg=6.35, threshold=14, min_avg=6.5
+        # Phase 6.1 evidence: best_approvals=12, best_avg=6.35 (unchanged historical data)
         best_approvals = 12
         best_avg = 6.35
-        threshold = 15
-        min_avg_threshold = 6.5
+        current_threshold = 12   # Task 11: lowered from 15
+        current_min_avg = 5.5    # Task 11: lowered from 6.5
 
-        assert best_approvals < threshold, (
-            f"Phase 6.1 evidence: best approvals {best_approvals} was below threshold {threshold}"
+        # With the new lower threshold, the Phase 6.1 best result now meets threshold
+        assert best_approvals >= current_threshold, (
+            f"Phase 6.1 best approvals {best_approvals} meets new threshold {current_threshold}"
         )
-        assert best_avg < min_avg_threshold, (
-            f"Phase 6.1 evidence: best avg {best_avg} was below threshold {min_avg_threshold}"
+        assert best_avg >= current_min_avg, (
+            f"Phase 6.1 best avg {best_avg} meets new min_avg {current_min_avg}"
         )
 
-        # Gap analysis
-        approval_gap = threshold - best_approvals
-        avg_gap = min_avg_threshold - best_avg
-        assert approval_gap >= 2, f"Expected gap of ≥2 approvals, got {approval_gap}"
-        assert abs(avg_gap - 0.15) < 0.01, f"Expected gap of ~0.15 avg, got {avg_gap}"
+        # Verify the raw evidence values themselves are stable (regression lock)
+        assert best_approvals == 12, "Phase 6.1 best_approvals must stay at 12"
+        assert abs(best_avg - 6.35) < 0.01, "Phase 6.1 best_avg must stay at ~6.35"
 
     def test_zero_natural_opens_is_documented_result(self):
         """

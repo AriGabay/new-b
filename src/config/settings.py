@@ -57,7 +57,7 @@ class EntryConfig:
     confirmation_min_groups: int = 2
     bundle_flush_timeout_ms: int = 50    # Flush pending bundles after N ms
     panel_min_approvals: int = 11
-    panel_min_avg_score: float = 5.8
+    panel_min_avg_score: float = 5.5
     allow_pure_indicator_proposals: bool = True
     single_signal_high_confidence: float = 0.80
 

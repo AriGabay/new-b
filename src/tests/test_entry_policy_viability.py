@@ -301,7 +301,7 @@ async def test_positions_do_not_open_without_panel_approval():
         await harness.teardown()
 
     agg = make_replay_aggregate_report(reports)
-    # With threshold lowered to 11/20 + avg 5.8, some replay fixtures now open
+    # With threshold lowered to 12/20 + avg 5.5, some replay fixtures now open
     # positions naturally. Verify that positions only open when panel approves
     # (not zero, not unbounded — safety rails still protect against bad entries).
     approved = agg["natural_positions_opened"]
@@ -390,17 +390,17 @@ def test_policy_comparison_is_deterministic():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_panel_thresholds_unchanged():
-    """Panel thresholds updated to Phase 4 optimized values."""
+    """Panel thresholds lowered to 12/20 approve and avg 5.5 (Task 11)."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 15  # Phase 4: optimized from 11
-    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.8
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 12
+    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.5
 
 
 @pytest.mark.asyncio
 async def test_panel_passes_qualifying_phase3_proposals():
     """
-    After threshold relaxation (11/20, avg 5.8), qualifying Phase 3 proposals
-    that score 11+ approvals now open positions. Candidates fire and the panel
+    After threshold relaxation (12/20, avg 5.5), qualifying Phase 3 proposals
+    that score 12+ approvals now open positions. Candidates fire and the panel
     approves those that meet the new lower threshold.
     """
     from validation.fixtures.btc_replay_fixture import get_bull_breakout_fixture

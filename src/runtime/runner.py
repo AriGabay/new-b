@@ -297,6 +297,43 @@ class BtcBybitPaperRunner:
                 self._historian._extension = self._journal_extension
                 logger.info("Runner: HistorianGroup wired to EntryGroup.")
 
+            # Wire 4H bar provider into EntryGroup for multi-timeframe alignment check.
+            # Provides the last N 4H bars oldest-first from MarketDataGroup's rolling history.
+            if self._market_data is not None and self._entry is not None:
+                _mdg = self._market_data  # capture for closure
+                self._entry._4h_bar_provider = (
+                    lambda sym, n, _mdg=_mdg:
+                        _mdg.get_bar_history(sym, "4h")[-n:]
+                )
+                logger.info("Runner: 4H bar provider wired to EntryGroup.")
+
+            # Wire 1H feature provider into EntryGroup for the volume filter.
+            # Returns the latest FeatureVector for the symbol from MarketDataGroup's cache.
+            if self._market_data is not None and self._entry is not None:
+                _mdg = self._market_data  # capture for closure
+                self._entry._feature_provider = (
+                    lambda sym, _mdg=_mdg: _mdg.get_feature_cache(sym, "1h")
+                )
+                logger.info("Runner: 1H feature provider wired to EntryGroup.")
+
+            # Wire ExitDiagnosticsRecorder into PerformanceJournalGroup.
+            # Provides 1H bar history so the recorder can compute ranging_score
+            # (72 bars before entry) and fill post-close snapshots (12h–96h).
+            if self._market_data is not None and self._performance_journal is not None:
+                try:
+                    from analysis.exit_diagnosis import ExitDiagnosticsRecorder
+                    _mdg_diag = self._market_data
+                    _recorder = ExitDiagnosticsRecorder()
+                    _recorder.bar_provider = (
+                        lambda sym, tf, _m=_mdg_diag: _m.get_bar_history(sym, tf)
+                    )
+                    self._performance_journal._exit_diagnostics = _recorder
+                    logger.info(
+                        "Runner: ExitDiagnosticsRecorder wired to PerformanceJournalGroup."
+                    )
+                except Exception as diag_exc:
+                    logger.warning("Runner: ExitDiagnosticsRecorder wiring failed: %s", diag_exc)
+
             logger.info(
                 "Runner: JournalExtension initialized and wired. "
                 "DecisionTraceLogger active. OutcomeAttributor wired to PerformanceJournalGroup."

@@ -39,22 +39,25 @@ from typing import Optional
 from core.setup_packet import BTCSetupPacket
 from core.schemas import Direction
 from traders.panel import PanelResult
+from traders.panel_constants import (
+    PANEL_APPROVE_THRESHOLD,
+    PANEL_REGIME_THRESHOLDS,
+    PANEL_SYMBOL_THRESHOLD_OFFSET,
+)
 
 logger = logging.getLogger(__name__)
 
 # Panel approval threshold constant (default fallback, referenced by hold-rationale text)
-_PANEL_APPROVE_THRESHOLD = 14  # default fallback
+_PANEL_APPROVE_THRESHOLD = PANEL_APPROVE_THRESHOLD      # from panel_constants
 
 # Phase 11B: regime-adaptive base thresholds
-_REGIME_BASE_THRESHOLDS = {
-    "bull": 14, "trending": 14, "ranging": 15, "bear": 15,
-}
+_REGIME_BASE_THRESHOLDS = PANEL_REGIME_THRESHOLDS       # from panel_constants
 
 # Rail 6: high-volatility adds this offset on top of regime base threshold
 _RAIL6_HIGH_VOL_OFFSET = 3
 
 # Task 11H: non-BTC symbols require tighter consensus (panel calibrated on BTC)
-_SYMBOL_THRESHOLD_OFFSET: dict[str, int] = {"ETHUSDT": 1, "BNBUSDT": 1}
+_SYMBOL_THRESHOLD_OFFSET: dict[str, int] = PANEL_SYMBOL_THRESHOLD_OFFSET  # from panel_constants
 
 
 @dataclass

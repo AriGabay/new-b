@@ -28,15 +28,16 @@ Usage
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import csv
 import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # Path setup — allow running from project root: python -m scripts.run_backtest
@@ -159,16 +160,84 @@ def _reset_mdp_thresholds() -> None:
     _pol.HC_MAX_DRAWDOWN     = 0.10
     _pol.HC_MIN_WIN_RATE     = 0.50
     _pol.MED_MIN_APPROVALS   = 11
-    _pol.MED_MIN_AVG_SCORE   = 5.8
+    _pol.MED_MIN_AVG_SCORE   = 5.5
     _pol.MED_MIN_RR          = 2.0
     _pol.SMALL_MIN_APPROVALS = 11
-    _pol.SMALL_MIN_AVG_SCORE = 5.8
+    _pol.SMALL_MIN_AVG_SCORE = 5.5
     _pol.DEFER_MIN_APPROVALS = 8
     _pol.DEFER_MIN_AVG_SCORE = 5.5
     _pol.DEFER_MIN_COMPOSITE = 0.65
     _pol.DEFER_MAX_STD_DEV   = 2.0
     _pol.REDUCE_MAX_STREAK   = -4
     _pol.REDUCE_MAX_DRAWDOWN = 0.25
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse optional --start / --end CLI arguments."""
+    parser = argparse.ArgumentParser(
+        description="BTC full-pipeline backtest runner",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python -m scripts.run_backtest\n"
+            "  python -m scripts.run_backtest --start 2023-01-01 --end 2024-12-31\n"
+            "  python -m scripts.run_backtest --start 2024-06-01\n"
+        ),
+    )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Inclusive start date (UTC). Default: first bar in CSV.",
+    )
+    parser.add_argument(
+        "--end",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Inclusive end date (UTC). Default: last bar in CSV.",
+    )
+    return parser.parse_args()
+
+
+def _parse_date_arg(date_str: str, label: str) -> datetime:
+    """Parse a YYYY-MM-DD string into a UTC-aware datetime (start of day)."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        logger.error(
+            "Invalid --%s date '%s' — expected YYYY-MM-DD format. %s",
+            label, date_str, exc,
+        )
+        sys.exit(1)
+
+
+def _filter_bars(
+    bars: list[OHLCVBar],
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+) -> list[OHLCVBar]:
+    """
+    Return the subset of bars whose timestamp falls within [start_dt, end_dt].
+
+    Both bounds are inclusive at the day level:
+      - start_dt: include bars where timestamp >= start_dt (start of day).
+      - end_dt:   include bars where timestamp < end_dt + 1 day
+                  (i.e., all hourly bars on the end date are included).
+    """
+    if start_dt is None and end_dt is None:
+        return bars
+
+    end_exclusive = (end_dt + timedelta(days=1)) if end_dt is not None else None
+
+    filtered = [
+        b for b in bars
+        if (start_dt is None or b.timestamp >= start_dt)
+        and (end_exclusive is None or b.timestamp < end_exclusive)
+    ]
+    return filtered
 
 
 def load_bars(csv_path: str) -> list[OHLCVBar]:
@@ -320,7 +389,10 @@ def _build_report(
     return "\n".join(lines)
 
 
-async def run_backtest() -> None:
+async def run_backtest(
+    start_dt: Optional[datetime] = None,
+    end_dt: Optional[datetime] = None,
+) -> None:
     logger.info("=" * 64)
     logger.info("  FULL PIPELINE BACKTEST  —  v2")
     logger.info("=" * 64)
@@ -330,13 +402,34 @@ async def run_backtest() -> None:
         sys.exit(1)
 
     logger.info("Loading bars from %s ...", DATA_FILE)
-    bars = load_bars(DATA_FILE)
+    all_bars = load_bars(DATA_FILE)
     logger.info(
-        "Loaded %d bars  |  %s → %s  (%.1f months)",
-        len(bars),
-        bars[0].timestamp.strftime("%Y-%m-%d"),
-        bars[-1].timestamp.strftime("%Y-%m-%d"),
-        len(bars) / 720,
+        "CSV contains %d bars  |  %s → %s  (%.1f months)",
+        len(all_bars),
+        all_bars[0].timestamp.strftime("%Y-%m-%d"),
+        all_bars[-1].timestamp.strftime("%Y-%m-%d"),
+        len(all_bars) / 720,
+    )
+
+    # ── Date filtering ────────────────────────────────────────────────────────
+    bars = _filter_bars(all_bars, start_dt, end_dt)
+    if not bars:
+        logger.error(
+            "No bars found in the requested date range (%s → %s). "
+            "The CSV covers %s → %s.",
+            start_dt.strftime("%Y-%m-%d") if start_dt else "start",
+            end_dt.strftime("%Y-%m-%d") if end_dt else "end",
+            all_bars[0].timestamp.strftime("%Y-%m-%d"),
+            all_bars[-1].timestamp.strftime("%Y-%m-%d"),
+        )
+        sys.exit(1)
+
+    range_start = bars[0].timestamp.strftime("%Y-%m-%d")
+    range_end   = bars[-1].timestamp.strftime("%Y-%m-%d")
+    print(f"Running backtest: {range_start} → {range_end} ({len(bars):,} bars)")
+    logger.info(
+        "Date range after filtering: %s → %s  (%d bars, %.1f months)",
+        range_start, range_end, len(bars), len(bars) / 720,
     )
 
     config = BacktestConfig(
@@ -419,4 +512,7 @@ async def run_backtest() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_backtest())
+    _args = _parse_args()
+    _start = _parse_date_arg(_args.start, "start") if _args.start else None
+    _end   = _parse_date_arg(_args.end,   "end")   if _args.end   else None
+    asyncio.run(run_backtest(start_dt=_start, end_dt=_end))

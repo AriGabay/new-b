@@ -6,8 +6,8 @@ It re-evaluates collected PanelResult data against alternative thresholds
 in isolation, clearly labeling all results as sensitivity analysis.
 
 Current production thresholds (TraderEvaluatorPanel):
-  APPROVE_THRESHOLD = 14  (14/20 traders must approve)
-  MIN_AVG_SCORE     = 6.5
+  APPROVE_THRESHOLD = 12  (12/20 traders must approve)
+  MIN_AVG_SCORE     = 5.5
 
 Current FinalDecisionGroup safety rails are applied on top — they are
 NOT varied in this analysis (they are hard risk constraints, not quality filters).

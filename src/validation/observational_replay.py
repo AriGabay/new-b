@@ -13,7 +13,7 @@ Design principles:
   - NO special-casing pass conditions
   - NO control-mode contamination
   - Real runner (BtcBybitPaperRunner, simulation_mode=True)
-  - Real panel (TraderEvaluatorPanel, APPROVE_THRESHOLD=14, MIN_AVG_SCORE=6.5)
+  - Real panel (TraderEvaluatorPanel, APPROVE_THRESHOLD=12, MIN_AVG_SCORE=5.5)
   - Real final decision layer (FinalDecisionGroup)
   - Real risk layer (9 deterministic rules)
   - Real exit layer (ExitGroup)

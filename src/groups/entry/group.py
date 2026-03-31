@@ -55,7 +55,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Callable, Optional
 
 from agents.base.group import BaseGroup
 from core.events import (
@@ -69,19 +69,25 @@ from core.schemas import (
     CandidateTradeProposal,
     CriticReport,
     Direction,
+    FeatureVector,
     GroupSignalBundle,
     HistoricalAnalog,
     ModeGate,
+    OHLCVBar,
     RegimeContext,
 )
 from core.state import SystemState
 
 logger = logging.getLogger(__name__)
 
-CONFIRMATION_GATE_MIN_GROUPS = 1   # Lowered from 2 — panel evaluators are the quality gate
-COMPOSITE_SCORE_THRESHOLD    = 0.30  # Lowered from 0.50 — allows indicator+momentum proposals
-CRITIC_SCORE_THRESHOLD       = 0.60
+CONFIRMATION_GATE_MIN_GROUPS  = 1     # Lowered from 2 — panel evaluators are the quality gate
+COMPOSITE_SCORE_THRESHOLD     = 0.30  # Lowered from 0.50 — allows indicator+momentum proposals
+CRITIC_SCORE_THRESHOLD        = 0.60
 SINGLE_SIGNAL_HIGH_CONFIDENCE = 0.60  # Lowered from 0.80 — single strong signal can proceed
+
+# Volume filter: skip bars where volume is abnormally low relative to the 20-bar SMA.
+# A bar at < 50 % of its own average signals illiquidity / outside market hours.
+LOW_VOLUME_THRESHOLD_RATIO = Decimal("0.5")
 
 # ---------------------------------------------------------------------------
 # Active score component weights (Phase 3)
@@ -138,6 +144,11 @@ class EntryGroup(BaseGroup):
 
     group_id = GroupID.ENTRY
 
+    # Number of 4H bars requested for the alignment check
+    _4H_BARS_REQUESTED: int = 60
+    # Minimum bars needed for a reliable EMA50 reading
+    _4H_MIN_BARS_FOR_EMA: int = 50
+
     def __init__(self, state: SystemState, bus: EventBus, config: Optional[dict] = None) -> None:
         super().__init__(state, bus, config)
         self._pending_bundles: dict[str, dict] = defaultdict(dict)
@@ -145,6 +156,20 @@ class EntryGroup(BaseGroup):
         # Agents injected at startup (concrete implementations wired in runner)
         self._historian = None
         self._critic = None
+        # 4H bar provider — injected by runner at startup.
+        # Signature: Callable[[str, int], list[OHLCVBar]]
+        #   arg 0: symbol (e.g. "BTCUSDT")
+        #   arg 1: number of bars requested (oldest-first, up to _4H_BARS_REQUESTED)
+        # When None the 4H alignment check is skipped (all proposals pass through).
+        self._4h_bar_provider: Optional[Callable[[str, int], list[OHLCVBar]]] = None
+
+        # 1H feature provider — injected by runner at startup.
+        # Signature: Callable[[str], Optional[FeatureVector]]
+        #   arg 0: symbol (e.g. "BTCUSDT")
+        # Returns the latest 1H FeatureVector for the symbol, or None if not yet
+        # available (e.g. still warming up).
+        # Used by the volume filter; when None the filter is skipped.
+        self._feature_provider: Optional[Callable[[str], Optional[FeatureVector]]] = None
 
     async def _setup(self) -> None:
         await self.bus.subscribe(GroupSignalEvent, self.handle_event)
@@ -220,6 +245,31 @@ class EntryGroup(BaseGroup):
         self._pending_bundles[symbol] = {}
 
         now = datetime.now(timezone.utc)
+
+        # ------------------------------------------------------------------
+        # 0. Volume filter — skip illiquid bars before any further work
+        # ------------------------------------------------------------------
+        # A bar whose volume is below 50 % of the 20-bar SMA is considered an
+        # off-hours / illiquid bar.  Entries on such bars have unreliable price
+        # action and poor fill quality; skip immediately.
+        if self._feature_provider is not None:
+            try:
+                _fv = self._feature_provider(symbol)
+            except Exception as exc:
+                logger.warning(
+                    "EntryGroup: volume filter: feature provider raised %s for %s "
+                    "— skipping volume check.", exc, symbol,
+                )
+                _fv = None
+            if _fv is not None and _fv.volume_sma20 > Decimal("0"):
+                _threshold = LOW_VOLUME_THRESHOLD_RATIO * _fv.volume_sma20
+                if _fv.volume < _threshold:
+                    logger.info(
+                        "EntryGroup: %s — skipped: low volume bar "
+                        "(volume=%.0f, threshold=%.0f)",
+                        symbol, float(_fv.volume), float(_threshold),
+                    )
+                    return
 
         # ------------------------------------------------------------------
         # 1. Flatten signals from all collected bundles
@@ -328,6 +378,61 @@ class EntryGroup(BaseGroup):
             return
 
         # ------------------------------------------------------------------
+        # 5c. SHORT quality gate — stronger requirements for short entries
+        #
+        # Analysis of 2023-2024 backtest revealed SHORTs had only 35.2% win
+        # rate in a bull market, dragging overall performance.  Two extra
+        # conditions are required before a SHORT proposal can proceed:
+        #
+        #   1. ADX14 > 30  — only short into a confirmed strong downtrend.
+        #                    ADX ≤ 30 = ranging/consolidating market; shorts
+        #                    there are fighting an undecided market and tend
+        #                    to be stopped out quickly.
+        #
+        #   2. EMA50 < EMA200 — the daily/1H death cross must be confirmed.
+        #                    Shorting while price is above the 200-period EMA
+        #                    means fighting the dominant uptrend.
+        #
+        # LONG entries are NOT affected by this gate.
+        #
+        # If the feature_provider is not wired (e.g. unit tests without live
+        # data), condition 2 is skipped gracefully.  Condition 1 (ADX) always
+        # applies because it comes from the regime context already available.
+        # ------------------------------------------------------------------
+        if direction == Direction.SHORT:
+            adx_val = getattr(regime, "adx14", 0.0)
+            if adx_val <= 30.0:
+                logger.info(
+                    "EntryGroup: %s SHORT rejected: weak trend (ADX=%.1f <= 30)",
+                    symbol, adx_val,
+                )
+                return
+
+            # Bear structure check via feature provider (EMA50 vs EMA200)
+            if self._feature_provider is not None:
+                try:
+                    _short_fv = self._feature_provider(symbol)
+                except Exception as exc:
+                    logger.warning(
+                        "EntryGroup: SHORT quality gate: feature provider raised %s "
+                        "— skipping bear structure check for %s.", exc, symbol,
+                    )
+                    _short_fv = None
+                if _short_fv is not None and _short_fv.ema50 >= _short_fv.ema200:
+                    logger.info(
+                        "EntryGroup: %s SHORT rejected: no bear structure "
+                        "(EMA50=%.0f >= EMA200=%.0f)",
+                        symbol, float(_short_fv.ema50), float(_short_fv.ema200),
+                    )
+                    return
+
+        # ------------------------------------------------------------------
+        # 5d. 4H trend alignment check
+        # ------------------------------------------------------------------
+        if not self._check_4h_alignment(symbol, direction):
+            return
+
+        # ------------------------------------------------------------------
         # 6. Historian query (before composite score so result feeds into it)
         # ------------------------------------------------------------------
         historian_analog: Optional[HistoricalAnalog] = None
@@ -421,6 +526,84 @@ class EntryGroup(BaseGroup):
             "EntryGroup: published CandidateTradeProposal %s %s score=%.2f",
             direction, symbol, composite_score,
         )
+
+    # ------------------------------------------------------------------
+    # 4H multi-timeframe alignment
+    # ------------------------------------------------------------------
+
+    def _ema_from_closes(self, closes: list[Decimal], period: int) -> Decimal:
+        """
+        Standard EMA with SMA seed.  Returns the final (current) EMA value.
+
+        Mirrors FeatureComputer._ema — kept local so EntryGroup has no
+        compile-time dependency on features.compute.
+        """
+        if len(closes) < period:
+            return closes[-1] if closes else Decimal("0")
+
+        mult          = Decimal(2) / Decimal(period + 1)
+        one_minus     = Decimal(1) - mult
+        ema: Decimal  = sum(closes[:period]) / Decimal(period)
+        for price in closes[period:]:
+            ema = price * mult + ema * one_minus
+        return ema
+
+    def _check_4h_alignment(self, symbol: str, direction: Direction) -> bool:
+        """
+        Multi-timeframe confirmation: require 4H EMA20 > EMA50 for LONG,
+        EMA20 < EMA50 for SHORT.
+
+        Bar data is obtained from self._4h_bar_provider (injected by runner).
+        When no provider is configured the check is skipped (returns True)
+        so proposals are not silently dropped in environments where 4H history
+        is unavailable (e.g. unit tests that don't exercise this gate).
+
+        Logs rejection reason at INFO level:
+          "rejected: 4H trend misalignment (EMA20={x:.2f}, EMA50={y:.2f})"
+
+        Returns:
+            True  — 4H trend aligns with direction, or check was skipped.
+            False — 4H trend opposes direction (proposal should be rejected).
+        """
+        if self._4h_bar_provider is None:
+            return True  # provider not wired — skip check
+
+        try:
+            bars: list[OHLCVBar] = self._4h_bar_provider(
+                symbol, self._4H_BARS_REQUESTED
+            )
+        except Exception as exc:
+            logger.warning(
+                "EntryGroup: _check_4h_alignment: bar provider raised %s — "
+                "skipping alignment check for %s.", exc, symbol,
+            )
+            return True
+
+        if len(bars) < self._4H_MIN_BARS_FOR_EMA:
+            logger.debug(
+                "EntryGroup: _check_4h_alignment: only %d 4H bars available "
+                "(need %d for reliable EMA50) — skipping check for %s.",
+                len(bars), self._4H_MIN_BARS_FOR_EMA, symbol,
+            )
+            return True
+
+        closes = [b.close for b in bars]
+        ema20 = self._ema_from_closes(closes, 20)
+        ema50 = self._ema_from_closes(closes, 50)
+
+        if direction == Direction.LONG:
+            aligned = ema20 > ema50
+        else:
+            aligned = ema20 < ema50
+
+        if not aligned:
+            logger.info(
+                "EntryGroup: %s %s — rejected: 4H trend misalignment "
+                "(EMA20=%.2f, EMA50=%.2f)",
+                symbol, direction.value, float(ema20), float(ema50),
+            )
+
+        return aligned
 
     def _compute_composite_score(
         self,

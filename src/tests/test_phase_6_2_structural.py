@@ -353,13 +353,13 @@ class TestPhase62FunnelRegression:
     """
 
     def test_panel_threshold_unchanged(self):
-        """Panel threshold must remain 15/20 approvals, avg ≥6.5. No changes allowed."""
-        APPROVE_THRESHOLD = 15
-        MIN_AVG_SCORE = 6.5
+        """Panel threshold lowered to 12/20 approvals, avg ≥5.5 (Task 11)."""
+        APPROVE_THRESHOLD = 12
+        MIN_AVG_SCORE = 5.5
         TRADER_COUNT = 20
 
-        assert APPROVE_THRESHOLD == 15, "APPROVE_THRESHOLD must remain 15"
-        assert MIN_AVG_SCORE == 6.5, "MIN_AVG_SCORE must remain 6.5"
+        assert APPROVE_THRESHOLD == 12, "APPROVE_THRESHOLD must remain 12"
+        assert MIN_AVG_SCORE == 5.5, "MIN_AVG_SCORE must remain 5.5"
         assert TRADER_COUNT == 20, "TRADER_COUNT must remain 20"
 
     def test_best_phase_62_score_exceeds_phase_61(self):

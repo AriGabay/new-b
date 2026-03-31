@@ -40,6 +40,7 @@ from agents.base.group import BaseGroup
 from core.events import (
     CandidateTradeEvent,
     EventBus,
+    FeatureReadyEvent,
     GroupSignalEvent,
     JournalEntryEvent,
     PositionCloseEvent,
@@ -79,6 +80,10 @@ class PerformanceJournalGroup(BaseGroup):
         self._last_weekly_summary = None
         self._summarizer = None         # SummarizerAgent, injected at startup
         self._outcome_attributor = None  # OutcomeAttributor, injected by runner after setup
+        # Exit diagnostics recorder — injected by runner after setup.
+        # When wired, records a post-trade snapshot for every closed position
+        # and writes results to data/exit_diagnosis.csv at teardown.
+        self._exit_diagnostics = None   # Optional[ExitDiagnosticsRecorder]
 
     async def _setup(self) -> None:
         # Subscribe to all relevant event types
@@ -88,6 +93,9 @@ class PerformanceJournalGroup(BaseGroup):
         await self.bus.subscribe(PositionOpenEvent,     self.handle_event)
         await self.bus.subscribe(PositionCloseEvent,    self.handle_event)
         await self.bus.subscribe(SystemAlertEvent,      self.handle_event)
+        # FeatureReadyEvent subscription drives post-close snapshot filling
+        # for the exit diagnostics recorder (only active when recorder is wired).
+        await self.bus.subscribe(FeatureReadyEvent,     self.handle_event)
         await self._initialize_db()
         logger.info("PerformanceJournalGroup ready. Journal DB initialized.")
 
@@ -105,6 +113,8 @@ class PerformanceJournalGroup(BaseGroup):
             await self._log_position_close(event)
         elif isinstance(event, SystemAlertEvent):
             await self._log_system_alert(event)
+        elif isinstance(event, FeatureReadyEvent):
+            self._on_feature_ready(event)
 
     async def _initialize_db(self) -> None:
         """Initialize JournalDB and create tables."""
@@ -182,6 +192,12 @@ class PerformanceJournalGroup(BaseGroup):
                 exit_signal=event.exit_signal,
                 position=event.final_position,
             )
+            # Register with exit diagnostics recorder (non-blocking — failures are logged)
+            if self._exit_diagnostics is not None:
+                self._exit_diagnostics.on_trade_close(
+                    position=event.final_position,
+                    exit_signal=event.exit_signal,
+                )
             # NOTE: state.close_position() is NOT called here.
             # ExitGroup._execute_exit() already calls state.close_position() before
             # publishing PositionCloseEvent. Calling it again here would double-count
@@ -260,6 +276,11 @@ class PerformanceJournalGroup(BaseGroup):
                     "PerformanceJournalGroup: outcome attribution failed: %s", exc
                 )
 
+    def _on_feature_ready(self, event: FeatureReadyEvent) -> None:
+        """Forward bar data to the exit diagnostics recorder (if wired)."""
+        if self._exit_diagnostics is not None and event.features is not None:
+            self._exit_diagnostics.on_bar(event.features)
+
     async def _log_system_alert(self, event: SystemAlertEvent) -> None:
         if self._journal_db is None:
             return
@@ -274,6 +295,14 @@ class PerformanceJournalGroup(BaseGroup):
             logger.warning("PerformanceJournalGroup: failed to log alert: %s", exc)
 
     async def _teardown(self) -> None:
+        # Flush and summarise exit diagnostics before closing the DB
+        if self._exit_diagnostics is not None:
+            try:
+                self._exit_diagnostics.flush_pending()
+                self._exit_diagnostics.print_summary()
+            except Exception as exc:
+                logger.warning("PerformanceJournalGroup: exit_diagnostics teardown error: %s", exc)
+
         if self._journal_db is not None:
             self._journal_db.close()
             self._journal_db = None

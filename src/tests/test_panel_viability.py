@@ -433,15 +433,15 @@ def test_ideal_phase3_proposal_passes_final_decision():
 
 
 def test_panel_approve_threshold_unchanged():
-    """APPROVE_THRESHOLD optimized to 15/20 in Phase 4 backtest tuning."""
+    """APPROVE_THRESHOLD lowered to 12/20 to increase trade frequency (Task 11)."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 15
+    assert TraderEvaluatorPanel.APPROVE_THRESHOLD == 12
 
 
 def test_panel_min_avg_score_unchanged():
-    """MIN_AVG_SCORE set to 5.8 for increased trade frequency."""
+    """MIN_AVG_SCORE lowered to 5.5 for increased trade frequency (Task 11)."""
     from traders.panel import TraderEvaluatorPanel
-    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.8
+    assert TraderEvaluatorPanel.MIN_AVG_SCORE == 5.5
 
 
 # ===========================================================================
@@ -533,7 +533,7 @@ async def test_positions_not_opened_without_panel_approval():
     finally:
         await harness.teardown()
 
-    # With threshold relaxed to 11/20 + avg 5.8, some proposals that previously
+    # With threshold relaxed to 12/20 + avg 5.5, some proposals that previously
     # were held now open positions. Verify positions are non-negative (no bypass).
     assert report.positions_opened >= 0, (
         f"positions_opened must be non-negative. Got {report.positions_opened}."
