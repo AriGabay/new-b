@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backtest Visualizer</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* TOP BAR */
+  #topbar {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 10px 16px; display: flex; align-items: center; gap: 16px; flex-shrink: 0;
+  }
+  #topbar h1 { font-size: 14px; font-weight: 600; color: #58a6ff; white-space: nowrap; }
+  .file-btn {
+    background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    transition: background 0.15s;
+  }
+  .file-btn:hover { background: #30363d; }
+  .file-btn input { display: none; }
+  #status { font-size: 11px; color: #8b949e; margin-left: 4px; }
+
+  /* STATS BAR */
+  #statsbar {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 6px 16px; display: flex; gap: 24px; flex-shrink: 0; flex-wrap: wrap;
+  }
+  .stat { display: flex; flex-direction: column; }
+  .stat-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 13px; font-weight: 600; }
+  .pos { color: #3fb950; }
+  .neg { color: #f85149; }
+  .neu { color: #e6edf3; }
+
+  /* MAIN LAYOUT */
+  #main { display: flex; flex: 1; overflow: hidden; }
+
+  /* CHART */
+  #chart-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #chart { flex: 1; }
+
+  /* SIDEBAR */
+  #sidebar {
+    width: 280px; background: #161b22; border-left: 1px solid #30363d;
+    display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0;
+  }
+  #sidebar-header {
+    padding: 10px 12px; border-bottom: 1px solid #30363d;
+    font-size: 12px; font-weight: 600; color: #8b949e;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #trade-count { font-size: 11px; color: #58a6ff; }
+  #trade-list { flex: 1; overflow-y: auto; }
+  #trade-list::-webkit-scrollbar { width: 4px; }
+  #trade-list::-webkit-scrollbar-track { background: #161b22; }
+  #trade-list::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+  .trade-item {
+    padding: 8px 12px; border-bottom: 1px solid #21262d;
+    cursor: pointer; transition: background 0.1s; font-size: 11px;
+  }
+  .trade-item:hover { background: #21262d; }
+  .trade-item.selected { background: #1f2d3d; border-left: 3px solid #58a6ff; }
+  .trade-item.win .trade-dir { color: #3fb950; }
+  .trade-item.loss .trade-dir { color: #f85149; }
+  .trade-item.breakeven .trade-dir { color: #d29922; }
+  .trade-row1 { display: flex; justify-content: space-between; margin-bottom: 3px; }
+  .trade-dir { font-weight: 600; font-size: 12px; }
+  .trade-pnl { font-weight: 600; }
+  .trade-row2 { display: flex; justify-content: space-between; color: #8b949e; }
+  .trade-pnl.pos { color: #3fb950; }
+  .trade-pnl.neg { color: #f85149; }
+
+  /* DETAIL PANEL */
+  #detail-panel {
+    background: #0d1117; border-top: 1px solid #30363d;
+    padding: 10px 12px; font-size: 11px; min-height: 130px; max-height: 130px; overflow-y: auto;
+  }
+  #detail-panel h3 { font-size: 11px; color: #58a6ff; margin-bottom: 8px; font-weight: 600; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+  .detail-row { display: flex; justify-content: space-between; }
+  .detail-key { color: #8b949e; }
+  .detail-val { color: #e6edf3; font-weight: 500; }
+  .detail-val.pos { color: #3fb950; }
+  .detail-val.neg { color: #f85149; }
+
+  /* FILTER BAR */
+  #filterbar {
+    padding: 6px 12px; border-bottom: 1px solid #30363d;
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .filter-btn {
+    padding: 2px 8px; border-radius: 12px; border: 1px solid #30363d;
+    background: transparent; color: #8b949e; font-size: 10px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .filter-btn.active { background: #1f2d3d; border-color: #58a6ff; color: #58a6ff; }
+  .filter-btn.win-btn.active { background: #1a3022; border-color: #3fb950; color: #3fb950; }
+  .filter-btn.loss-btn.active { background: #3d1a1a; border-color: #f85149; color: #f85149; }
+
+  /* EMPTY STATE */
+  #empty-state {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; color: #8b949e; pointer-events: none;
+  }
+  #empty-state h2 { font-size: 18px; margin-bottom: 8px; color: #30363d; }
+  #empty-state p { font-size: 12px; line-height: 1.6; }
+
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 600;
+  }
+  .badge-long { background: #1a3022; color: #3fb950; }
+  .badge-short { background: #3d1a1a; color: #f85149; }
+  .badge-win { background: #1a3022; color: #3fb950; }
+  .badge-loss { background: #3d1a1a; color: #f85149; }
+  .badge-be { background: #2d2208; color: #d29922; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <h1>📈 Backtest Visualizer</h1>
+  <label class="file-btn">
+    Load OHLCV (CSV)
+    <input type="file" id="ohlcv-file" accept=".csv">
+  </label>
+  <label class="file-btn">
+    Load Trades (CSV)
+    <input type="file" id="trades-file" accept=".csv">
+  </label>
+  <span id="status">Load OHLCV data first, then trades CSV</span>
+</div>
+
+<!-- STATS BAR -->
+<div id="statsbar">
+  <div class="stat"><span class="stat-label">Trades</span><span class="stat-value neu" id="s-total">—</span></div>
+  <div class="stat"><span class="stat-label">Win Rate</span><span class="stat-value neu" id="s-wr">—</span></div>
+  <div class="stat"><span class="stat-label">Profit Factor</span><span class="stat-value neu" id="s-pf">—</span></div>
+  <div class="stat"><span class="stat-label">Net P&L</span><span class="stat-value neu" id="s-pnl">—</span></div>
+  <div class="stat"><span class="stat-label">Max DD</span><span class="stat-value neu" id="s-dd">—</span></div>
+  <div class="stat"><span class="stat-label">Avg R</span><span class="stat-value neu" id="s-avgr">—</span></div>
+  <div class="stat"><span class="stat-label">Avg Bars Held</span><span class="stat-value neu" id="s-bars">—</span></div>
+  <div class="stat"><span class="stat-label">Stop Loss %</span><span class="stat-value neu" id="s-sl">—</span></div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <div id="chart-wrap">
+    <div id="chart">
+      <div id="empty-state">
+        <h2>No data loaded</h2>
+        <p>1. Load OHLCV CSV (btcusdt_1h_2024_2025.csv)<br>
+           2. Load Trades CSV (backtest_trades.csv)<br><br>
+           <small>Entry ▲▼ · Exit ● · Selected trade shows SL/TP lines</small></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>TRADES</span>
+      <span id="trade-count">0 trades</span>
+    </div>
+    <div id="filterbar">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn win-btn" data-filter="win">Wins</button>
+      <button class="filter-btn loss-btn" data-filter="loss">Losses</button>
+      <button class="filter-btn" data-filter="LONG">Long</button>
+      <button class="filter-btn" data-filter="SHORT">Short</button>
+    </div>
+    <div id="trade-list"></div>
+    <div id="detail-panel">
+      <p style="color:#8b949e; font-size:11px;">Click a trade to see details</p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let chart = null;
+let candleSeries = null;
+let slLine = null;
+let tpLine = null;
+let beLine = null;
+let allTrades = [];
+let filteredTrades = [];
+let selectedTrade = null;
+let activeFilter = 'all';
+let ohlcvLoaded = false;
+
+// ─── CHART INIT ──────────────────────────────────────────────────────────────
+function initChart() {
+  const container = document.getElementById('chart');
+  document.getElementById('empty-state')?.remove();
+
+  chart = LightweightCharts.createChart(container, {
+    layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+    grid: { vertLines: { color: '#1c2128' }, horzLines: { color: '#1c2128' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#30363d' },
+    timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+    handleScroll: true,
+    handleScale: true,
+  });
+
+  candleSeries = chart.addCandlestickSeries({
+    upColor: '#3fb950', downColor: '#f85149',
+    borderUpColor: '#3fb950', borderDownColor: '#f85149',
+    wickUpColor: '#3fb950', wickDownColor: '#f85149',
+  });
+
+  // Resize
+  const resizeObserver = new ResizeObserver(() => {
+    chart.applyOptions({
+      width: container.clientWidth,
+      height: container.clientHeight,
+    });
+  });
+  resizeObserver.observe(container);
+  chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+}
+
+// ─── OHLCV LOADING ───────────────────────────────────────────────────────────
+document.getElementById('ohlcv-file').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  setStatus(`Loading ${file.name}...`);
+
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true,
+    complete: function(results) {
+      const bars = [];
+      for (const row of results.data) {
+        const ts = parseTimestamp(row.timestamp || row.time || row.date);
+        if (!ts) continue;
+        bars.push({
+          time: ts,
+          open:  parseFloat(row.open),
+          high:  parseFloat(row.high),
+          low:   parseFloat(row.low),
+          close: parseFloat(row.close),
+        });
+      }
+      bars.sort((a, b) => a.time - b.time);
+
+      if (!chart) initChart();
+      candleSeries.setData(bars);
+      chart.timeScale().fitContent();
+      ohlcvLoaded = true;
+      setStatus(`✓ ${bars.length.toLocaleString()} bars loaded · Now load trades CSV`);
+    },
+    error: (err) => setStatus(`Error: ${err.message}`)
+  });
+});
+
+// ─── TRADES LOADING ──────────────────────────────────────────────────────────
+document.getElementById('trades-file').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!ohlcvLoaded) { setStatus('⚠ Load OHLCV data first!'); return; }
+  setStatus(`Loading trades from ${file.name}...`);
+
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true,
+    complete: function(results) {
+      allTrades = parseTrades(results.data);
+      applyFilter(activeFilter);
+      renderStats(allTrades);
+      setStatus(`✓ ${allTrades.length} trades loaded`);
+    },
+    error: (err) => setStatus(`Error: ${err.message}`)
+  });
+});
+
+function parseTrades(rows) {
+  return rows.map((r, i) => {
+    const direction = (r.direction || '').toUpperCase();
+    const pnlUsd = parseFloat(r.pnl_usd || 0);
+    const pnlR   = parseFloat(r.pnl_r || 0);
+    const outcome = r.outcome || (pnlUsd > 0 ? 'win' : pnlUsd < 0 ? 'loss' : 'breakeven');
+    return {
+      id:           r.trade_id || `T${i+1}`,
+      direction,
+      entryTime:    parseTimestamp(r.opened_at || r.entry_time),
+      exitTime:     parseTimestamp(r.closed_at  || r.exit_time),
+      entryPrice:   parseFloat(r.entry_price),
+      exitPrice:    parseFloat(r.exit_price),
+      stopPrice:    parseFloat(r.stop_price  || r.stop_loss),
+      targetPrice:  parseFloat(r.target_price || r.take_profit),
+      pnlUsd,
+      pnlR,
+      barsHeld:     parseInt(r.bars_held || 0),
+      exitReason:   r.exit_reason || r.close_reason || '—',
+      outcome:      outcome.toLowerCase(),
+      composite:    parseFloat(r.composite_score || 0),
+      posSize:      parseFloat(r.position_size_usd || 0),
+      rAmount:      parseFloat(r.r_amount || 0),
+    };
+  }).filter(t => t.entryTime && t.entryPrice);
+}
+
+// ─── MARKERS ─────────────────────────────────────────────────────────────────
+function renderMarkers(trades) {
+  const markers = [];
+  for (const t of trades) {
+    const isLong = t.direction === 'LONG';
+    const isWin  = t.outcome === 'win';
+
+    // Entry marker
+    markers.push({
+      time:     t.entryTime,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color:    isLong ? '#3fb950' : '#f85149',
+      shape:    isLong ? 'arrowUp' : 'arrowDown',
+      text:     `${t.direction[0]} ${t.id}`,
+      size:     1,
+    });
+
+    // Exit marker
+    if (t.exitTime) {
+      markers.push({
+        time:     t.exitTime,
+        position: isLong ? 'aboveBar' : 'belowBar',
+        color:    isWin ? '#3fb950' : t.outcome === 'breakeven' ? '#d29922' : '#f85149',
+        shape:    'circle',
+        text:     isWin ? '✓' : '✗',
+        size:     0.8,
+      });
+    }
+  }
+
+  // Sort by time (required by lightweight-charts)
+  markers.sort((a, b) => a.time - b.time);
+  candleSeries.setMarkers(markers);
+}
+
+// ─── SL / TP LINES ───────────────────────────────────────────────────────────
+function clearPriceLines() {
+  if (slLine) { candleSeries.removePriceLine(slLine); slLine = null; }
+  if (tpLine) { candleSeries.removePriceLine(tpLine); tpLine = null; }
+  if (beLine) { candleSeries.removePriceLine(beLine); beLine = null; }
+}
+
+function showPriceLines(trade) {
+  clearPriceLines();
+  if (!trade) return;
+
+  if (trade.stopPrice && !isNaN(trade.stopPrice)) {
+    slLine = candleSeries.createPriceLine({
+      price: trade.stopPrice, color: '#f85149',
+      lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title: 'SL',
+    });
+  }
+  if (trade.targetPrice && !isNaN(trade.targetPrice)) {
+    tpLine = candleSeries.createPriceLine({
+      price: trade.targetPrice, color: '#3fb950',
+      lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title: 'TP',
+    });
+  }
+  if (trade.entryPrice && !isNaN(trade.entryPrice)) {
+    beLine = candleSeries.createPriceLine({
+      price: trade.entryPrice, color: '#58a6ff',
+      lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true, title: 'Entry',
+    });
+  }
+}
+
+// ─── TRADE LIST ──────────────────────────────────────────────────────────────
+function renderTradeList(trades) {
+  const list = document.getElementById('trade-list');
+  document.getElementById('trade-count').textContent = `${trades.length} trades`;
+
+  if (!trades.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:#8b949e;font-size:11px;">No trades match filter</div>';
+    return;
+  }
+
+  list.innerHTML = trades.map((t, i) => {
+    const pnlClass = t.pnlUsd > 0 ? 'pos' : t.pnlUsd < 0 ? 'neg' : '';
+    const pnlStr   = t.pnlUsd > 0 ? `+$${t.pnlUsd.toFixed(0)}` : `$${t.pnlUsd.toFixed(0)}`;
+    const rStr     = t.pnlR > 0 ? `+${t.pnlR.toFixed(2)}R` : `${t.pnlR.toFixed(2)}R`;
+    const dateStr  = formatDate(t.entryTime);
+    const dirBadge = t.direction === 'LONG'
+      ? '<span class="badge badge-long">LONG</span>'
+      : '<span class="badge badge-short">SHORT</span>';
+    const outcBadge = t.outcome === 'win'
+      ? '<span class="badge badge-win">WIN</span>'
+      : t.outcome === 'breakeven'
+        ? '<span class="badge badge-be">BE</span>'
+        : '<span class="badge badge-loss">LOSS</span>';
+
+    return `
+      <div class="trade-item ${t.outcome}" data-idx="${i}" onclick="selectTrade(${i})">
+        <div class="trade-row1">
+          <span class="trade-dir">${dirBadge} ${outcBadge}</span>
+          <span class="trade-pnl ${pnlClass}">${pnlStr} (${rStr})</span>
+        </div>
+        <div class="trade-row2">
+          <span>${dateStr}</span>
+          <span>${t.exitReason}</span>
+          <span>${t.barsHeld}h</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function selectTrade(idx) {
+  selectedTrade = filteredTrades[idx];
+  if (!selectedTrade) return;
+
+  // Highlight in list
+  document.querySelectorAll('.trade-item').forEach((el, i) => {
+    el.classList.toggle('selected', i === idx);
+  });
+
+  // Show SL/TP lines
+  showPriceLines(selectedTrade);
+
+  // Navigate chart to entry time
+  if (chart && selectedTrade.entryTime) {
+    const from = selectedTrade.entryTime - 60 * 3600;  // 60h before
+    const to   = (selectedTrade.exitTime || selectedTrade.entryTime) + 60 * 3600;
+    chart.timeScale().setVisibleRange({ from, to });
+  }
+
+  // Detail panel
+  renderDetail(selectedTrade);
+}
+
+function renderDetail(t) {
+  const panel = document.getElementById('detail-panel');
+  const pnlClass = t.pnlUsd > 0 ? 'pos' : 'neg';
+  const rClass   = t.pnlR   > 0 ? 'pos' : 'neg';
+  const slDist   = t.entryPrice && t.stopPrice
+    ? (Math.abs(t.entryPrice - t.stopPrice) / t.entryPrice * 100).toFixed(2) + '%'
+    : '—';
+  const tpDist   = t.entryPrice && t.targetPrice
+    ? (Math.abs(t.entryPrice - t.targetPrice) / t.entryPrice * 100).toFixed(2) + '%'
+    : '—';
+  const rr = t.entryPrice && t.stopPrice && t.targetPrice
+    ? (Math.abs(t.targetPrice - t.entryPrice) / Math.abs(t.entryPrice - t.stopPrice)).toFixed(2) + ':1'
+    : '—';
+
+  panel.innerHTML = `
+    <h3>Trade ${t.id} · ${t.direction}</h3>
+    <div class="detail-grid">
+      <div class="detail-row"><span class="detail-key">Entry</span><span class="detail-val">$${fmt(t.entryPrice)}</span></div>
+      <div class="detail-row"><span class="detail-key">Exit</span><span class="detail-val">$${fmt(t.exitPrice)}</span></div>
+      <div class="detail-row"><span class="detail-key">Stop Loss</span><span class="detail-val neg">$${fmt(t.stopPrice)} (${slDist})</span></div>
+      <div class="detail-row"><span class="detail-key">Take Profit</span><span class="detail-val pos">$${fmt(t.targetPrice)} (${tpDist})</span></div>
+      <div class="detail-row"><span class="detail-key">P&L $</span><span class="detail-val ${pnlClass}">${t.pnlUsd > 0 ? '+' : ''}$${t.pnlUsd.toFixed(2)}</span></div>
+      <div class="detail-row"><span class="detail-key">P&L R</span><span class="detail-val ${rClass}">${t.pnlR > 0 ? '+' : ''}${t.pnlR.toFixed(3)}R</span></div>
+      <div class="detail-row"><span class="detail-key">R:R Planned</span><span class="detail-val">${rr}</span></div>
+      <div class="detail-row"><span class="detail-key">Bars Held</span><span class="detail-val">${t.barsHeld}h</span></div>
+      <div class="detail-row"><span class="detail-key">Exit Reason</span><span class="detail-val">${t.exitReason}</span></div>
+      <div class="detail-row"><span class="detail-key">Score</span><span class="detail-val">${t.composite ? t.composite.toFixed(3) : '—'}</span></div>
+    </div>`;
+}
+
+// ─── STATS ───────────────────────────────────────────────────────────────────
+function renderStats(trades) {
+  const closed = trades.filter(t => t.outcome !== 'open');
+  const wins   = closed.filter(t => t.outcome === 'win');
+  const losses = closed.filter(t => t.outcome === 'loss');
+  const wr     = closed.length ? (wins.length / closed.length * 100).toFixed(1) : 0;
+
+  const totalWin  = wins.reduce((s, t) => s + t.pnlUsd, 0);
+  const totalLoss = Math.abs(losses.reduce((s, t) => s + t.pnlUsd, 0));
+  const pf        = totalLoss > 0 ? (totalWin / totalLoss).toFixed(2) : '∞';
+  const netPnl    = closed.reduce((s, t) => s + t.pnlUsd, 0);
+  const avgR      = closed.length ? (closed.reduce((s, t) => s + t.pnlR, 0) / closed.length).toFixed(3) : 0;
+  const avgBars   = closed.length ? Math.round(closed.reduce((s, t) => s + t.barsHeld, 0) / closed.length) : 0;
+  const slPct     = closed.length ? (closed.filter(t => t.exitReason === 'stop_loss').length / closed.length * 100).toFixed(0) : 0;
+
+  // Max drawdown (approximate from cumulative PnL)
+  let peak = 0, dd = 0, cum = 0;
+  for (const t of closed) {
+    cum += t.pnlUsd;
+    if (cum > peak) peak = cum;
+    const curDD = peak > 0 ? (peak - cum) / peak * 100 : 0;
+    if (curDD > dd) dd = curDD;
+  }
+
+  const s = (id, val, cls) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    el.className = `stat-value ${cls}`;
+  };
+
+  s('s-total', closed.length, 'neu');
+  s('s-wr',  `${wr}%`,  parseFloat(wr) >= 45 ? 'pos' : parseFloat(wr) >= 35 ? 'neu' : 'neg');
+  s('s-pf',  pf,        parseFloat(pf) >= 1.3 ? 'pos' : parseFloat(pf) >= 1.0 ? 'neu' : 'neg');
+  s('s-pnl', `${netPnl >= 0 ? '+' : ''}$${netPnl.toFixed(0)}`, netPnl >= 0 ? 'pos' : 'neg');
+  s('s-dd',  `${dd.toFixed(1)}%`, dd <= 20 ? 'pos' : dd <= 35 ? 'neu' : 'neg');
+  s('s-avgr', `${parseFloat(avgR) >= 0 ? '+' : ''}${avgR}R`, parseFloat(avgR) >= 0 ? 'pos' : 'neg');
+  s('s-bars', `${avgBars}h`, 'neu');
+  s('s-sl',  `${slPct}%`, parseFloat(slPct) <= 40 ? 'pos' : parseFloat(slPct) <= 60 ? 'neu' : 'neg');
+}
+
+// ─── FILTER ──────────────────────────────────────────────────────────────────
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    applyFilter(activeFilter);
+  });
+});
+
+function applyFilter(f) {
+  if (f === 'all')  filteredTrades = [...allTrades];
+  else if (f === 'win')  filteredTrades = allTrades.filter(t => t.outcome === 'win');
+  else if (f === 'loss') filteredTrades = allTrades.filter(t => t.outcome === 'loss');
+  else filteredTrades = allTrades.filter(t => t.direction === f);
+
+  renderTradeList(filteredTrades);
+  if (chart) renderMarkers(filteredTrades);
+  clearPriceLines();
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function parseTimestamp(str) {
+  if (!str) return null;
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return null;
+  return Math.floor(d.getTime() / 1000);
+}
+
+function formatDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  return d.toISOString().slice(0, 16).replace('T', ' ');
+}
+
+function fmt(n) {
+  if (!n || isNaN(n)) return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+</script>
+</body>
+</html>
