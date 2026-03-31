@@ -83,7 +83,7 @@ class PerformanceMetrics:
         self,
         trades: list[TradeRecord],
         hypothesis_id: str,
-        initial_equity: float = 100_000.0,
+        initial_equity: float = 1_000.0,  # Capital: $1,000 with 10x leverage = $10,000 notional
     ) -> HypothesisMetrics:
         """
         Compute full metric set from a list of closed trades.

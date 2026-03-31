@@ -40,9 +40,15 @@
   /* MAIN LAYOUT */
   #main { display: flex; flex: 1; overflow: hidden; }
 
-  /* CHART */
+  /* CHART — position:relative so canvas overlay sits inside it */
   #chart-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  #chart { flex: 1; }
+  #chart { flex: 1; position: relative; overflow: hidden; }
+
+  /* CANVAS OVERLAY — on top of the LW chart canvas, never blocks mouse */
+  #trade-canvas {
+    position: absolute; top: 0; left: 0;
+    pointer-events: none; z-index: 10;
+  }
 
   /* SIDEBAR */
   #sidebar {
@@ -106,7 +112,7 @@
   /* EMPTY STATE */
   #empty-state {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    text-align: center; color: #8b949e; pointer-events: none;
+    text-align: center; color: #8b949e; pointer-events: none; z-index: 5;
   }
   #empty-state h2 { font-size: 18px; margin-bottom: 8px; color: #30363d; }
   #empty-state p { font-size: 12px; line-height: 1.6; }
@@ -157,8 +163,10 @@
         <h2>No data loaded</h2>
         <p>1. Load OHLCV CSV (btcusdt_1h_2024_2025.csv)<br>
            2. Load Trades CSV (backtest_trades.csv)<br><br>
-           <small>Entry ▲▼ · Exit ● · Selected trade shows SL/TP lines</small></p>
+           <small>Entry ▲▼ · Exit ● · Click trade to focus</small></p>
       </div>
+      <!-- Canvas overlay: drawn on top of LightweightCharts, never blocks mouse -->
+      <canvas id="trade-canvas"></canvas>
     </div>
   </div>
 
@@ -183,16 +191,17 @@
 
 <script>
 // ─── STATE ───────────────────────────────────────────────────────────────────
-let chart = null;
-let candleSeries = null;
-let slLine = null;
-let tpLine = null;
-let beLine = null;
-let allTrades = [];
+let chart         = null;
+let candleSeries  = null;
+let tradeCanvas   = null;   // <canvas> overlay element
+let ctx           = null;   // CanvasRenderingContext2D
+let allTrades     = [];
 let filteredTrades = [];
 let selectedTrade = null;
-let activeFilter = 'all';
-let ohlcvLoaded = false;
+let activeFilter  = 'all';
+let ohlcvLoaded   = false;
+let candleTimes       = new Set();   // fast exact-match lookup
+let candleTimesSorted = [];          // sorted array for nearest-candle search
 
 // ─── CHART INIT ──────────────────────────────────────────────────────────────
 function initChart() {
@@ -201,29 +210,45 @@ function initChart() {
 
   chart = LightweightCharts.createChart(container, {
     layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
-    grid: { vertLines: { color: '#1c2128' }, horzLines: { color: '#1c2128' } },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    grid:   { vertLines: { color: '#1c2128' }, horzLines: { color: '#1c2128' } },
+    crosshair:       { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: { borderColor: '#30363d' },
-    timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+    timeScale:       { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
     handleScroll: true,
-    handleScale: true,
+    handleScale:  true,
   });
 
   candleSeries = chart.addCandlestickSeries({
-    upColor: '#3fb950', downColor: '#f85149',
-    borderUpColor: '#3fb950', borderDownColor: '#f85149',
-    wickUpColor: '#3fb950', wickDownColor: '#f85149',
+    upColor:        '#3fb950', downColor:        '#f85149',
+    borderUpColor:  '#3fb950', borderDownColor:  '#f85149',
+    wickUpColor:    '#3fb950', wickDownColor:    '#f85149',
   });
 
-  // Resize
+  // Canvas overlay — sits on top of the LW chart canvas
+  tradeCanvas = document.getElementById('trade-canvas');
+  ctx = tradeCanvas.getContext('2d');
+
+  // Redraw canvas whenever the chart scrolls or zooms
+  chart.timeScale().subscribeVisibleTimeRangeChange(drawAllTrades);
+  chart.timeScale().subscribeVisibleLogicalRangeChange(drawAllTrades);
+
+  // Keep chart + canvas sized to their container at all times
   const resizeObserver = new ResizeObserver(() => {
-    chart.applyOptions({
-      width: container.clientWidth,
-      height: container.clientHeight,
-    });
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    chart.applyOptions({ width: w, height: h });
+    tradeCanvas.width  = w;
+    tradeCanvas.height = h;
+    drawAllTrades();
   });
   resizeObserver.observe(container);
-  chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+
+  // Set initial size
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  chart.applyOptions({ width: w, height: h });
+  tradeCanvas.width  = w;
+  tradeCanvas.height = h;
 }
 
 // ─── OHLCV LOADING ───────────────────────────────────────────────────────────
@@ -240,7 +265,7 @@ document.getElementById('ohlcv-file').addEventListener('change', function(e) {
         const ts = parseTimestamp(row.timestamp || row.time || row.date);
         if (!ts) continue;
         bars.push({
-          time: ts,
+          time:  ts,
           open:  parseFloat(row.open),
           high:  parseFloat(row.high),
           low:   parseFloat(row.low),
@@ -249,13 +274,18 @@ document.getElementById('ohlcv-file').addEventListener('change', function(e) {
       }
       bars.sort((a, b) => a.time - b.time);
 
+      // Build candle-time index for snapToCandle()
+      candleTimes       = new Set(bars.map(b => b.time));
+      candleTimesSorted = bars.map(b => b.time).sort((a, b) => a - b);
+
       if (!chart) initChart();
       candleSeries.setData(bars);
       chart.timeScale().fitContent();
       ohlcvLoaded = true;
       setStatus(`✓ ${bars.length.toLocaleString()} bars loaded · Now load trades CSV`);
+      drawAllTrades();
     },
-    error: (err) => setStatus(`Error: ${err.message}`)
+    error: (err) => setStatus(`Error: ${err.message}`),
   });
 });
 
@@ -274,7 +304,7 @@ document.getElementById('trades-file').addEventListener('change', function(e) {
       renderStats(allTrades);
       setStatus(`✓ ${allTrades.length} trades loaded`);
     },
-    error: (err) => setStatus(`Error: ${err.message}`)
+    error: (err) => setStatus(`Error: ${err.message}`),
   });
 });
 
@@ -282,95 +312,191 @@ function parseTrades(rows) {
   return rows.map((r, i) => {
     const direction = (r.direction || '').toUpperCase();
     const pnlUsd = parseFloat(r.pnl_usd || 0);
-    const pnlR   = parseFloat(r.pnl_r || 0);
+    const pnlR   = parseFloat(r.pnl_r   || 0);
     const outcome = r.outcome || (pnlUsd > 0 ? 'win' : pnlUsd < 0 ? 'loss' : 'breakeven');
     return {
-      id:           r.trade_id || `T${i+1}`,
+      id:          r.trade_id || `T${i + 1}`,
       direction,
-      entryTime:    parseTimestamp(r.opened_at || r.entry_time),
-      exitTime:     parseTimestamp(r.closed_at  || r.exit_time),
-      entryPrice:   parseFloat(r.entry_price),
-      exitPrice:    parseFloat(r.exit_price),
-      stopPrice:    parseFloat(r.stop_price  || r.stop_loss),
-      targetPrice:  parseFloat(r.target_price || r.take_profit),
+      entryTime:   parseTimestamp(r.opened_at    || r.entry_time),
+      exitTime:    parseTimestamp(r.closed_at     || r.exit_time),
+      entryPrice:  parseFloat(r.entry_price),
+      exitPrice:   parseFloat(r.exit_price),
+      stopPrice:   parseFloat(r.stop_price   || r.stop_loss),
+      targetPrice: parseFloat(r.target_price  || r.take_profit),
       pnlUsd,
       pnlR,
-      barsHeld:     parseInt(r.bars_held || 0),
-      exitReason:   r.exit_reason || r.close_reason || '—',
-      outcome:      outcome.toLowerCase(),
-      composite:    parseFloat(r.composite_score || 0),
-      posSize:      parseFloat(r.position_size_usd || 0),
-      rAmount:      parseFloat(r.r_amount || 0),
+      barsHeld:    parseInt(r.bars_held || 0),
+      exitReason:  r.exit_reason || r.close_reason || '—',
+      outcome:     outcome.toLowerCase(),
+      composite:   parseFloat(r.composite_score   || 0),
+      posSize:     parseFloat(r.position_size_usd || 0),
+      rAmount:     parseFloat(r.r_amount          || 0),
     };
   }).filter(t => t.entryTime && t.entryPrice);
 }
 
-// ─── MARKERS ─────────────────────────────────────────────────────────────────
-function renderMarkers(trades) {
-  const markers = [];
-  for (const t of trades) {
-    const isLong = t.direction === 'LONG';
-    const isWin  = t.outcome === 'win';
+// ─── SNAP TO CANDLE ──────────────────────────────────────────────────────────
+function snapToCandle(ts) {
+  if (!ts) return null;
+  if (candleTimes.has(ts)) return ts;
+  // Find closest candle time within a 2-hour search window
+  let closest = candleTimesSorted[0];
+  let minDiff = Math.abs(candleTimesSorted[0] - ts);
+  for (const t of candleTimesSorted) {
+    const diff = Math.abs(t - ts);
+    if (diff < minDiff) { minDiff = diff; closest = t; }
+    if (t > ts + 7200) break;
+  }
+  return closest;
+}
 
-    // Entry marker
-    markers.push({
-      time:     t.entryTime,
-      position: isLong ? 'belowBar' : 'aboveBar',
-      color:    isLong ? '#3fb950' : '#f85149',
-      shape:    isLong ? 'arrowUp' : 'arrowDown',
-      text:     `${t.direction[0]} ${t.id}`,
-      size:     1,
-    });
+// ─── CANVAS TRADE DRAWING ─────────────────────────────────────────────────────
+function drawAllTrades() {
+  if (!ctx || !chart || !candleSeries) return;
 
-    // Exit marker
-    if (t.exitTime) {
-      markers.push({
-        time:     t.exitTime,
-        position: isLong ? 'aboveBar' : 'belowBar',
-        color:    isWin ? '#3fb950' : t.outcome === 'breakeven' ? '#d29922' : '#f85149',
-        shape:    'circle',
-        text:     isWin ? '✓' : '✗',
-        size:     0.8,
-      });
+  const W = tradeCanvas.width;
+  const H = tradeCanvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!filteredTrades.length) return;
+
+  for (const t of filteredTrades) {
+    const isLong     = t.direction === 'LONG';
+    const isSelected = t === selectedTrade;
+
+    // ── Snap trade times to known candle timestamps ──────────────────────────
+    const snappedEntry = snapToCandle(t.entryTime);
+    const snappedExit  = snapToCandle(t.exitTime || t.entryTime);
+    if (!snappedEntry) continue;
+
+    // ── Convert times → x pixel coordinates ──────────────────────────────────
+    // timeToCoordinate returns null when the timestamp is not present in the data.
+    // It can return a number outside [0, W] for times that are in the data but
+    // currently scrolled off-screen — the browser clips those draws automatically.
+    const rawEntryX = chart.timeScale().timeToCoordinate(snappedEntry);
+    const rawExitX  = snappedExit ? chart.timeScale().timeToCoordinate(snappedExit) : rawEntryX;
+    if (rawEntryX === null && rawExitX === null) continue;
+
+    // If one end is off-data (null), clamp to the canvas edge so partial
+    // trades (entry visible, exit off-screen right, etc.) still draw.
+    const entryX = rawEntryX !== null ? rawEntryX : 0;
+    const exitX  = rawExitX  !== null ? rawExitX  : W;
+
+    const x1    = Math.min(entryX, exitX);
+    const x2    = Math.max(entryX, exitX) + 1; // +1 keeps single-candle trades visible
+    const rectW = Math.max(x2 - x1, 2);
+
+    // Skip trades that are entirely off-screen
+    if (x2 < 0 || x1 > W) continue;
+
+    // ── Convert prices → y pixel coordinates ─────────────────────────────────
+    const entryY  = candleSeries.priceToCoordinate(t.entryPrice);
+    const exitY   = (t.exitPrice  && !isNaN(t.exitPrice))  ? candleSeries.priceToCoordinate(t.exitPrice)  : null;
+    const slY     = (t.stopPrice  && !isNaN(t.stopPrice))  ? candleSeries.priceToCoordinate(t.stopPrice)  : null;
+    const tpY     = (t.targetPrice && !isNaN(t.targetPrice)) ? candleSeries.priceToCoordinate(t.targetPrice) : null;
+    if (entryY === null) continue;
+
+    // ── Filled zones (profit = green, risk = red) ─────────────────────────────
+    // Math.min/max handles both LONG and SHORT automatically:
+    //   LONG:  tpY < entryY (TP above entry in price → higher on screen → smaller y)
+    //          slY > entryY (SL below entry in price → lower on screen → larger y)
+    //   SHORT: tpY > entryY (TP below entry in price)
+    //          slY < entryY (SL above entry in price)
+    if (slY !== null && tpY !== null) {
+      const profitY1 = Math.min(entryY, tpY);
+      const profitY2 = Math.max(entryY, tpY);
+      ctx.fillStyle = 'rgba(63,185,80,0.10)';
+      ctx.fillRect(x1, profitY1, rectW, profitY2 - profitY1);
+
+      const riskY1 = Math.min(entryY, slY);
+      const riskY2 = Math.max(entryY, slY);
+      ctx.fillStyle = 'rgba(248,81,73,0.10)';
+      ctx.fillRect(x1, riskY1, rectW, riskY2 - riskY1);
     }
-  }
 
-  // Sort by time (required by lightweight-charts)
-  markers.sort((a, b) => a.time - b.time);
-  candleSeries.setMarkers(markers);
-}
+    // ── SL horizontal line (entry → exit only) ───────────────────────────────
+    if (slY !== null) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#f85149';
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([]);
+      ctx.moveTo(x1, slY);
+      ctx.lineTo(x2, slY);
+      ctx.stroke();
+    }
 
-// ─── SL / TP LINES ───────────────────────────────────────────────────────────
-function clearPriceLines() {
-  if (slLine) { candleSeries.removePriceLine(slLine); slLine = null; }
-  if (tpLine) { candleSeries.removePriceLine(tpLine); tpLine = null; }
-  if (beLine) { candleSeries.removePriceLine(beLine); beLine = null; }
-}
+    // ── TP horizontal line (entry → exit only) ───────────────────────────────
+    if (tpY !== null) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#3fb950';
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([]);
+      ctx.moveTo(x1, tpY);
+      ctx.lineTo(x2, tpY);
+      ctx.stroke();
+    }
 
-function showPriceLines(trade) {
-  clearPriceLines();
-  if (!trade) return;
+    // ── Selected-trade highlight border ──────────────────────────────────────
+    if (isSelected && slY !== null && tpY !== null) {
+      const boxY1 = Math.min(slY, tpY);
+      const boxY2 = Math.max(slY, tpY);
+      ctx.strokeStyle = 'rgba(88,166,255,0.8)';
+      ctx.lineWidth   = 2;
+      ctx.setLineDash([]);
+      ctx.strokeRect(x1, boxY1, rectW, boxY2 - boxY1);
+    }
 
-  if (trade.stopPrice && !isNaN(trade.stopPrice)) {
-    slLine = candleSeries.createPriceLine({
-      price: trade.stopPrice, color: '#f85149',
-      lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true, title: 'SL',
-    });
-  }
-  if (trade.targetPrice && !isNaN(trade.targetPrice)) {
-    tpLine = candleSeries.createPriceLine({
-      price: trade.targetPrice, color: '#3fb950',
-      lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true, title: 'TP',
-    });
-  }
-  if (trade.entryPrice && !isNaN(trade.entryPrice)) {
-    beLine = candleSeries.createPriceLine({
-      price: trade.entryPrice, color: '#58a6ff',
-      lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
-      axisLabelVisible: true, title: 'Entry',
-    });
+    // ── Entry triangle ────────────────────────────────────────────────────────
+    // Only draw if the entry x is on-screen
+    if (rawEntryX !== null && rawEntryX >= 0 && rawEntryX <= W) {
+      const triW   = 6;   // half-width of triangle base
+      const triH   = 8;   // height of triangle
+      const triGap = 5;   // gap between entryY and nearest triangle vertex
+
+      ctx.beginPath();
+      ctx.fillStyle = isLong ? '#3fb950' : '#f85149';
+      if (isLong) {
+        // ▲  Tip points UP; triangle sits below the entry price line
+        const tipY  = entryY + triGap;          // tip (top of triangle, but below entryY)
+        const baseY = tipY + triH;              // base (further below)
+        ctx.moveTo(entryX,        tipY);
+        ctx.lineTo(entryX - triW, baseY);
+        ctx.lineTo(entryX + triW, baseY);
+      } else {
+        // ▼  Tip points DOWN; triangle sits above the entry price line
+        const tipY  = entryY - triGap;          // tip (bottom of triangle, but above entryY)
+        const baseY = tipY - triH;              // base (further above)
+        ctx.moveTo(entryX,        tipY);
+        ctx.lineTo(entryX - triW, baseY);
+        ctx.lineTo(entryX + triW, baseY);
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // Entry label ("L" / "S") next to the triangle
+      ctx.fillStyle  = isLong ? '#3fb950' : '#f85149';
+      ctx.font       = 'bold 9px sans-serif';
+      ctx.textAlign  = 'center';
+      if (isLong) {
+        ctx.fillText('L', entryX, entryY + triGap + triH + 9);
+      } else {
+        ctx.fillText('S', entryX, entryY - triGap - triH - 3);
+      }
+    }
+
+    // ── Exit circle ───────────────────────────────────────────────────────────
+    if (exitY !== null && rawExitX !== null && rawExitX >= 0 && rawExitX <= W) {
+      const dotColor = t.outcome === 'win'      ? '#3fb950'
+                     : t.outcome === 'breakeven' ? '#d29922'
+                     :                             '#f85149';
+      ctx.beginPath();
+      ctx.arc(exitX, exitY, 4, 0, Math.PI * 2);
+      ctx.fillStyle   = dotColor;
+      ctx.fill();
+      ctx.strokeStyle = '#0d1117';  // dark halo separates dot from candle body
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+    }
   }
 }
 
@@ -417,38 +543,38 @@ function selectTrade(idx) {
   selectedTrade = filteredTrades[idx];
   if (!selectedTrade) return;
 
-  // Highlight in list
+  // Highlight in sidebar list
   document.querySelectorAll('.trade-item').forEach((el, i) => {
     el.classList.toggle('selected', i === idx);
   });
 
-  // Show SL/TP lines
-  showPriceLines(selectedTrade);
-
-  // Navigate chart to entry time
+  // Navigate chart: show entry→exit with 20-candle padding on each side
   if (chart && selectedTrade.entryTime) {
-    const from = selectedTrade.entryTime - 60 * 3600;  // 60h before
-    const to   = (selectedTrade.exitTime || selectedTrade.entryTime) + 60 * 3600;
+    const snappedEntry = snapToCandle(selectedTrade.entryTime);
+    const snappedExit  = snapToCandle(selectedTrade.exitTime || selectedTrade.entryTime);
+    const pad = 20 * 3600;  // 20 candles × 1 h each
+    const from = (snappedEntry || selectedTrade.entryTime) - pad;
+    const to   = (snappedExit  || selectedTrade.exitTime || selectedTrade.entryTime) + pad;
     chart.timeScale().setVisibleRange({ from, to });
   }
 
-  // Detail panel
+  // Redraw so the selected trade gets its blue highlight border
+  drawAllTrades();
+
+  // Show detail panel
   renderDetail(selectedTrade);
 }
 
 function renderDetail(t) {
-  const panel = document.getElementById('detail-panel');
+  const panel    = document.getElementById('detail-panel');
   const pnlClass = t.pnlUsd > 0 ? 'pos' : 'neg';
   const rClass   = t.pnlR   > 0 ? 'pos' : 'neg';
   const slDist   = t.entryPrice && t.stopPrice
-    ? (Math.abs(t.entryPrice - t.stopPrice) / t.entryPrice * 100).toFixed(2) + '%'
-    : '—';
+    ? (Math.abs(t.entryPrice - t.stopPrice)   / t.entryPrice * 100).toFixed(2) + '%' : '—';
   const tpDist   = t.entryPrice && t.targetPrice
-    ? (Math.abs(t.entryPrice - t.targetPrice) / t.entryPrice * 100).toFixed(2) + '%'
-    : '—';
+    ? (Math.abs(t.entryPrice - t.targetPrice) / t.entryPrice * 100).toFixed(2) + '%' : '—';
   const rr = t.entryPrice && t.stopPrice && t.targetPrice
-    ? (Math.abs(t.targetPrice - t.entryPrice) / Math.abs(t.entryPrice - t.stopPrice)).toFixed(2) + ':1'
-    : '—';
+    ? (Math.abs(t.targetPrice - t.entryPrice) / Math.abs(t.entryPrice - t.stopPrice)).toFixed(2) + ':1' : '—';
 
   panel.innerHTML = `
     <h3>Trade ${t.id} · ${t.direction}</h3>
@@ -481,7 +607,7 @@ function renderStats(trades) {
   const avgBars   = closed.length ? Math.round(closed.reduce((s, t) => s + t.barsHeld, 0) / closed.length) : 0;
   const slPct     = closed.length ? (closed.filter(t => t.exitReason === 'stop_loss').length / closed.length * 100).toFixed(0) : 0;
 
-  // Max drawdown (approximate from cumulative PnL)
+  // Approximate max drawdown from cumulative PnL curve
   let peak = 0, dd = 0, cum = 0;
   for (const t of closed) {
     cum += t.pnlUsd;
@@ -497,13 +623,13 @@ function renderStats(trades) {
   };
 
   s('s-total', closed.length, 'neu');
-  s('s-wr',  `${wr}%`,  parseFloat(wr) >= 45 ? 'pos' : parseFloat(wr) >= 35 ? 'neu' : 'neg');
-  s('s-pf',  pf,        parseFloat(pf) >= 1.3 ? 'pos' : parseFloat(pf) >= 1.0 ? 'neu' : 'neg');
-  s('s-pnl', `${netPnl >= 0 ? '+' : ''}$${netPnl.toFixed(0)}`, netPnl >= 0 ? 'pos' : 'neg');
-  s('s-dd',  `${dd.toFixed(1)}%`, dd <= 20 ? 'pos' : dd <= 35 ? 'neu' : 'neg');
+  s('s-wr',   `${wr}%`,  parseFloat(wr) >= 45 ? 'pos' : parseFloat(wr) >= 35 ? 'neu' : 'neg');
+  s('s-pf',   pf,        parseFloat(pf) >= 1.3 ? 'pos' : parseFloat(pf) >= 1.0 ? 'neu' : 'neg');
+  s('s-pnl',  `${netPnl >= 0 ? '+' : ''}$${netPnl.toFixed(0)}`, netPnl >= 0 ? 'pos' : 'neg');
+  s('s-dd',   `${dd.toFixed(1)}%`, dd <= 20 ? 'pos' : dd <= 35 ? 'neu' : 'neg');
   s('s-avgr', `${parseFloat(avgR) >= 0 ? '+' : ''}${avgR}R`, parseFloat(avgR) >= 0 ? 'pos' : 'neg');
   s('s-bars', `${avgBars}h`, 'neu');
-  s('s-sl',  `${slPct}%`, parseFloat(slPct) <= 40 ? 'pos' : parseFloat(slPct) <= 60 ? 'neu' : 'neg');
+  s('s-sl',   `${slPct}%`, parseFloat(slPct) <= 40 ? 'pos' : parseFloat(slPct) <= 60 ? 'neu' : 'neg');
 }
 
 // ─── FILTER ──────────────────────────────────────────────────────────────────
@@ -517,14 +643,13 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 });
 
 function applyFilter(f) {
-  if (f === 'all')  filteredTrades = [...allTrades];
+  if (f === 'all')       filteredTrades = [...allTrades];
   else if (f === 'win')  filteredTrades = allTrades.filter(t => t.outcome === 'win');
   else if (f === 'loss') filteredTrades = allTrades.filter(t => t.outcome === 'loss');
-  else filteredTrades = allTrades.filter(t => t.direction === f);
+  else                   filteredTrades = allTrades.filter(t => t.direction === f);
 
   renderTradeList(filteredTrades);
-  if (chart) renderMarkers(filteredTrades);
-  clearPriceLines();
+  if (chart) drawAllTrades();
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -549,6 +674,81 @@ function fmt(n) {
 function setStatus(msg) {
   document.getElementById('status').textContent = msg;
 }
+
+// ─── AUTO-LOAD ON PAGE START ──────────────────────────────────────────────────
+// Fetches the fixed OHLCV file, then immediately tries the trades CSV.
+// Falls back gracefully if either file is missing.
+document.addEventListener('DOMContentLoaded', () => {
+  const OHLCV_URL  = 'historical_eval/data/btcusdt_1h_2024_2025.csv';
+  const TRADES_URL = 'backtest_trades.csv';
+
+  setStatus('Auto-loading BTC 1H data…');
+
+  fetch(OHLCV_URL)
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    })
+    .then(csvText => {
+      // Parse with PapaParse — identical path to the manual file-picker handler
+      Papa.parse(csvText, {
+        header: true, skipEmptyLines: true,
+        complete: function(results) {
+          const bars = [];
+          for (const row of results.data) {
+            const ts = parseTimestamp(row.timestamp || row.time || row.date);
+            if (!ts) continue;
+            bars.push({
+              time:  ts,
+              open:  parseFloat(row.open),
+              high:  parseFloat(row.high),
+              low:   parseFloat(row.low),
+              close: parseFloat(row.close),
+            });
+          }
+          bars.sort((a, b) => a.time - b.time);
+
+          candleTimes       = new Set(bars.map(b => b.time));
+          candleTimesSorted = bars.map(b => b.time).sort((a, b) => a - b);
+
+          if (!chart) initChart();
+          candleSeries.setData(bars);
+          chart.timeScale().fitContent();
+          ohlcvLoaded = true;
+
+          setStatus(`✓ BTC 1H auto-loaded (${bars.length.toLocaleString()} bars) · Load Trades CSV to begin`);
+
+          // ── Immediately try to auto-load the trades CSV too ──────────────
+          fetch(TRADES_URL)
+            .then(res => {
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              return res.text();
+            })
+            .then(tradesCsv => {
+              Papa.parse(tradesCsv, {
+                header: true, skipEmptyLines: true,
+                complete: function(trRes) {
+                  allTrades = parseTrades(trRes.data);
+                  applyFilter(activeFilter);
+                  renderStats(allTrades);
+                  setStatus(`✓ BTC 1H + ${allTrades.length} trades auto-loaded · Ready`);
+                },
+              });
+            })
+            .catch(() => {
+              // Trades file not found — just wait for manual load, no error shown
+            });
+        },
+        error: (err) => {
+          setStatus(`Auto-load parse error — please load OHLCV manually`);
+          console.warn('OHLCV parse error:', err);
+        },
+      });
+    })
+    .catch(() => {
+      setStatus('Auto-load failed — please load OHLCV manually');
+    });
+});
 </script>
 </body>
 </html>

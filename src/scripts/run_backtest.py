@@ -74,11 +74,15 @@ DATA_FILE   = os.path.join(
 REPORT_FILE = os.path.join(
     _PROJECT_ROOT, "analysis", "historical_eval", "report_v2.txt"
 )
+TRADES_CSV       = os.path.join(_PROJECT_ROOT, "analysis", "backtest_trades.csv")
+TRADES_CSV_NO_TS = os.path.join(_PROJECT_ROOT, "analysis", "backtest_trades_no_ts.csv")
+EXPERIMENT_MD    = os.path.join(_PROJECT_ROOT, "analysis", "time_stop_experiment.md")
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-INITIAL_EQUITY  = Decimal("10000")
+# Capital: $1,000 with 10x leverage = $10,000 notional
+INITIAL_EQUITY  = Decimal("1000")
 MAX_ITERATIONS  = 3
 
 # Target gates (all must pass for iteration to stop early)
@@ -86,6 +90,13 @@ TARGET_TRADES   = 300
 TARGET_WIN_RATE = 0.52
 TARGET_PF       = 1.3
 TARGET_MAX_DD   = 0.15   # must be BELOW this
+
+TRADES_CSV_COLUMNS = [
+    "trade_id", "direction", "opened_at", "closed_at",
+    "entry_price", "exit_price", "stop_price", "target_price",
+    "pnl_usd", "pnl_r", "bars_held", "exit_reason",
+    "outcome", "composite_score", "position_size_usd", "r_amount",
+]
 
 # v1 baseline (EMA-crossover only, prior results)
 V1_BASELINE: dict[str, Any] = {
@@ -137,6 +148,58 @@ _THRESHOLD_SCHEDULES: list[dict[str, Any]] = [
         "DEFER_MIN_AVG_SCORE": 5.0,
     },
 ]
+
+
+def _export_trades_csv(trade_records: list[dict], path: str = TRADES_CSV) -> None:
+    """Export closed trade records to a CSV file (default: analysis/backtest_trades.csv)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    def _fmt_price(val) -> str:
+        if val == "" or val is None:
+            return ""
+        try:
+            return f"{float(val):.2f}"
+        except (TypeError, ValueError):
+            return ""
+
+    def _fmt_pnl_r(val) -> str:
+        if val == "" or val is None:
+            return ""
+        try:
+            return f"{float(val):.4f}"
+        except (TypeError, ValueError):
+            return ""
+
+    def _fmt_str(val) -> str:
+        if val is None:
+            return ""
+        s = str(val)
+        return "" if s in ("None", "null") else s
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=TRADES_CSV_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        for rec in trade_records:
+            writer.writerow({
+                "trade_id":          _fmt_str(rec.get("trade_id", "")),
+                "direction":         _fmt_str(rec.get("direction", "")).upper(),
+                "opened_at":         _fmt_str(rec.get("opened_at", "")),
+                "closed_at":         _fmt_str(rec.get("closed_at", "")),
+                "entry_price":       _fmt_price(rec.get("entry_price", "")),
+                "exit_price":        _fmt_price(rec.get("exit_price", "")),
+                "stop_price":        _fmt_price(rec.get("stop_price", "")),
+                "target_price":      _fmt_price(rec.get("target_price", "")),
+                "pnl_usd":           _fmt_price(rec.get("pnl_usd", "")),
+                "pnl_r":             _fmt_pnl_r(rec.get("pnl_r", "")),
+                "bars_held":         _fmt_str(rec.get("bars_held", "")),
+                "exit_reason":       _fmt_str(rec.get("exit_reason", "")),
+                "outcome":           _fmt_str(rec.get("outcome", "")),
+                "composite_score":   _fmt_price(rec.get("composite_score", "")),
+                "position_size_usd": _fmt_price(rec.get("position_size_usd", "")),
+                "r_amount":          _fmt_price(rec.get("r_amount", "")),
+            })
+    rel = os.path.relpath(path, _PROJECT_ROOT)
+    print(f"✓ Trades exported → {rel} ({len(trade_records)} trades)")
 
 
 def _patch_mdp_thresholds(overrides: dict[str, Any]) -> None:
@@ -197,6 +260,18 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         metavar="YYYY-MM-DD",
         help="Inclusive end date (UTC). Default: last bar in CSV.",
+    )
+    parser.add_argument(
+        "--no-time-stop",
+        action="store_true",
+        default=False,
+        dest="no_time_stop",
+        help=(
+            "Disable all time-based exits (TIME_STOP_BARS and BREAKEVEN_BARS). "
+            "Runs the baseline WITH time stop first, then WITHOUT, and prints a "
+            "side-by-side comparison saved to analysis/time_stop_experiment.md. "
+            "Also exports analysis/backtest_trades_no_ts.csv."
+        ),
     )
     return parser.parse_args()
 
@@ -389,13 +464,254 @@ def _build_report(
     return "\n".join(lines)
 
 
+async def _run_iterations(
+    bars: list[OHLCVBar],
+    config: BacktestConfig,
+    disable_time_stop: bool = False,
+) -> tuple[BacktestResult, dict, float, int]:
+    """
+    Run the full MDP-iteration loop and return the best result.
+
+    Extracted from run_backtest() so it can be called twice when --no-time-stop
+    is active (once with, once without time stops) for the comparison experiment.
+
+    Returns:
+        (best_result, best_meta, best_elapsed_s, best_iteration_index)
+    """
+    best_result: BacktestResult | None = None
+    best_meta:   dict = {}
+    best_iter    = 0
+    best_elapsed = 0.0
+
+    for iteration in range(MAX_ITERATIONS):
+        _reset_mdp_thresholds()
+        overrides = (
+            _THRESHOLD_SCHEDULES[iteration]
+            if iteration < len(_THRESHOLD_SCHEDULES)
+            else {}
+        )
+        if overrides:
+            logger.info(
+                "Iteration %d — applying MDP threshold relaxations:", iteration + 1
+            )
+            _patch_mdp_thresholds(overrides)
+        else:
+            logger.info(
+                "Iteration %d — using production MDP thresholds (no overrides)",
+                iteration + 1,
+            )
+
+        engine = BacktestEngine(config)
+        logger.info("Starting bar-by-bar pipeline replay (%d bars)...", len(bars))
+        t0 = time.perf_counter()
+        result = await engine.run_full_pipeline(
+            {"BTCUSDT": bars},
+            verbose=True,
+            disable_time_stop=disable_time_stop,
+        )
+        elapsed = time.perf_counter() - t0
+
+        meta = result.per_hypothesis.get("_meta", {})
+        return_pct = float(result.total_pnl_usd) / float(INITIAL_EQUITY) * 100
+
+        logger.info(
+            "Iteration %d complete: trades=%d  WR=%.1f%%  PF=%.2f  "
+            "MaxDD=%.1f%%  Return=%.2f%%  (%.1fs)",
+            iteration + 1,
+            result.total_trades,
+            result.win_rate * 100,
+            result.profit_factor,
+            result.max_drawdown_pct * 100,
+            return_pct,
+            elapsed,
+        )
+
+        if best_result is None or result.total_trades > best_result.total_trades:
+            best_result  = result
+            best_meta    = meta
+            best_iter    = iteration
+            best_elapsed = elapsed
+
+        if _gates_pass(result, meta):
+            logger.info(
+                "All target gates passed on iteration %d — stopping early.",
+                iteration + 1,
+            )
+            break
+
+        if iteration < MAX_ITERATIONS - 1:
+            logger.info(
+                "Gates not fully met (trades=%d, WR=%.1f%%, PF=%.2f) — "
+                "relaxing thresholds for iteration %d ...",
+                result.total_trades,
+                result.win_rate * 100,
+                result.profit_factor,
+                iteration + 2,
+            )
+
+    _reset_mdp_thresholds()
+    assert best_result is not None
+    return best_result, best_meta, best_elapsed, best_iter
+
+
+def _build_comparison_table(
+    r_ts: BacktestResult,
+    m_ts: dict,
+    r_no: BacktestResult,
+    m_no: dict,
+    date_range: str,
+) -> str:
+    """
+    Build a markdown comparison table between two runs (with / without time stop).
+
+    Columns: Metric | With Time Stop | No Time Stop | Change
+    """
+    trades_ts = m_ts.get("trade_records", [])
+    trades_no = m_no.get("trade_records", [])
+
+    def pct_reason(records: list[dict], reason: str) -> float:
+        if not records:
+            return 0.0
+        return sum(1 for t in records if t.get("exit_reason") == reason) / len(records) * 100
+
+    def avg_bars_held(records: list[dict]) -> float:
+        if not records:
+            return 0.0
+        return sum(t.get("bars_held", 0) for t in records) / len(records)
+
+    eq = float(INITIAL_EQUITY)
+    pnl_ts = float(r_ts.total_pnl_usd)
+    pnl_no = float(r_no.total_pnl_usd)
+
+    # Each row: (label, with-ts value string, no-ts value string, change string)
+    rows = [
+        (
+            "Total trades",
+            f"{r_ts.total_trades}",
+            f"{r_no.total_trades}",
+            f"{r_no.total_trades - r_ts.total_trades:+d}",
+        ),
+        (
+            "Win rate",
+            f"{r_ts.win_rate:.1%}",
+            f"{r_no.win_rate:.1%}",
+            f"{(r_no.win_rate - r_ts.win_rate) * 100:+.1f}pp",
+        ),
+        (
+            "Profit factor",
+            f"{r_ts.profit_factor:.2f}",
+            f"{r_no.profit_factor:.2f}",
+            f"{r_no.profit_factor - r_ts.profit_factor:+.2f}",
+        ),
+        (
+            "Net P&L $",
+            f"${pnl_ts:+,.0f}",
+            f"${pnl_no:+,.0f}",
+            f"${pnl_no - pnl_ts:+,.0f}",
+        ),
+        (
+            "Net P&L %",
+            f"{pnl_ts / eq * 100:+.1f}%",
+            f"{pnl_no / eq * 100:+.1f}%",
+            f"{(pnl_no - pnl_ts) / eq * 100:+.1f}pp",
+        ),
+        (
+            "Max drawdown",
+            f"{r_ts.max_drawdown_pct:.1%}",
+            f"{r_no.max_drawdown_pct:.1%}",
+            f"{(r_no.max_drawdown_pct - r_ts.max_drawdown_pct) * 100:+.1f}pp",
+        ),
+        (
+            "Avg bars held",
+            f"{avg_bars_held(trades_ts):.1f}",
+            f"{avg_bars_held(trades_no):.1f}",
+            f"{avg_bars_held(trades_no) - avg_bars_held(trades_ts):+.1f}",
+        ),
+        (
+            "% closed by time stop",
+            f"{pct_reason(trades_ts, 'time_stop'):.0f}%",
+            "0%",
+            f"{-pct_reason(trades_ts, 'time_stop'):.0f}pp",
+        ),
+        (
+            "% closed by stop loss",
+            f"{pct_reason(trades_ts, 'stop_loss'):.0f}%",
+            f"{pct_reason(trades_no, 'stop_loss'):.0f}%",
+            f"{pct_reason(trades_no, 'stop_loss') - pct_reason(trades_ts, 'stop_loss'):+.0f}pp",
+        ),
+        (
+            "% closed by trailing SL",
+            f"{pct_reason(trades_ts, 'trailing_stop'):.0f}%",
+            f"{pct_reason(trades_no, 'trailing_stop'):.0f}%",
+            f"{pct_reason(trades_no, 'trailing_stop') - pct_reason(trades_ts, 'trailing_stop'):+.0f}pp",
+        ),
+        (
+            "% closed by TP",
+            f"{pct_reason(trades_ts, 'target_reached'):.0f}%",
+            f"{pct_reason(trades_no, 'target_reached'):.0f}%",
+            f"{pct_reason(trades_no, 'target_reached') - pct_reason(trades_ts, 'target_reached'):+.0f}pp",
+        ),
+    ]
+
+    # Conclusion
+    wr_diff_pp = (r_no.win_rate - r_ts.win_rate) * 100
+    if wr_diff_pp > 3.0:
+        conclusion = (
+            "CONCLUSION: Time stop is cutting winners early. "
+            "Recommend disabling or extending."
+        )
+    elif wr_diff_pp >= -3.0:
+        conclusion = "CONCLUSION: Time stop has minimal impact. Not the main issue."
+    else:
+        conclusion = "CONCLUSION: Time stop is protective. Keep it."
+
+    sep = "=" * 68
+    lines = [
+        "# Time Stop Experiment",
+        "",
+        f"Date range : {date_range}",
+        f"Generated  : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Baseline equity : ${float(INITIAL_EQUITY):,.0f}",
+        "",
+        "| Metric                  | With Time Stop | No Time Stop | Change |",
+        "|-------------------------|----------------|--------------|--------|",
+    ]
+    for label, v_ts, v_no, change in rows:
+        lines.append(f"| {label:<23} | {v_ts:>14} | {v_no:>12} | {change:>6} |")
+
+    lines += [
+        "",
+        f"> **{conclusion}**",
+        "",
+        "---",
+        "",
+        "Files:",
+        f"- With time stop : `analysis/backtest_trades.csv`",
+        f"- No time stop   : `analysis/backtest_trades_no_ts.csv`",
+    ]
+    return "\n".join(lines)
+
+
+def _save_comparison_md(content: str) -> None:
+    """Write the comparison table to analysis/time_stop_experiment.md."""
+    os.makedirs(os.path.dirname(EXPERIMENT_MD), exist_ok=True)
+    with open(EXPERIMENT_MD, "w", encoding="utf-8") as f:
+        f.write(content + "\n")
+    rel = os.path.relpath(EXPERIMENT_MD, _PROJECT_ROOT)
+    print(f"✓ Comparison saved → {rel}")
+
+
 async def run_backtest(
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
+    no_time_stop: bool = False,
 ) -> None:
     logger.info("=" * 64)
     logger.info("  FULL PIPELINE BACKTEST  —  v2")
     logger.info("=" * 64)
+
+    if no_time_stop:
+        print("⚠ Time stop DISABLED — trades close on SL / TP / trailing stop only")
 
     if not os.path.exists(DATA_FILE):
         logger.error("Data file not found: %s", DATA_FILE)
@@ -426,7 +742,8 @@ async def run_backtest(
 
     range_start = bars[0].timestamp.strftime("%Y-%m-%d")
     range_end   = bars[-1].timestamp.strftime("%Y-%m-%d")
-    print(f"Running backtest: {range_start} → {range_end} ({len(bars):,} bars)")
+    date_range  = f"{range_start} → {range_end}"
+    print(f"Running backtest: {date_range} ({len(bars):,} bars)")
     logger.info(
         "Date range after filtering: %s → %s  (%d bars, %.1f months)",
         range_start, range_end, len(bars), len(bars) / 720,
@@ -442,77 +759,61 @@ async def run_backtest(
         output_db_path = "data/backtest_journal.db",
     )
 
-    best_result: BacktestResult | None = None
-    best_meta:   dict = {}
-    best_iter    = 0
+    if no_time_stop:
+        # ── Comparison mode: run baseline first, then without time stops ──────
+        logger.info("=" * 64)
+        logger.info("  PASS 1/2 — with time stop (baseline)")
+        logger.info("=" * 64)
+        r_ts, m_ts, elapsed_ts, iter_ts = await _run_iterations(
+            bars, config, disable_time_stop=False
+        )
+        _export_trades_csv(m_ts.get("trade_records", []), TRADES_CSV)
+        report_ts = _build_report(bars, r_ts, m_ts, elapsed_ts, iter_ts)
 
-    for iteration in range(MAX_ITERATIONS):
-        # ---- Apply threshold schedule -----------------------------------
-        _reset_mdp_thresholds()
-        overrides = _THRESHOLD_SCHEDULES[iteration] if iteration < len(_THRESHOLD_SCHEDULES) else {}
-        if overrides:
-            logger.info("Iteration %d — applying MDP threshold relaxations:", iteration + 1)
-            _patch_mdp_thresholds(overrides)
-        else:
-            logger.info("Iteration %d — using production MDP thresholds (no overrides)", iteration + 1)
+        logger.info("=" * 64)
+        logger.info("  PASS 2/2 — without time stop")
+        logger.info("=" * 64)
+        r_no, m_no, elapsed_no, iter_no = await _run_iterations(
+            bars, config, disable_time_stop=True
+        )
+        _export_trades_csv(m_no.get("trade_records", []), TRADES_CSV_NO_TS)
+        report_no = _build_report(bars, r_no, m_no, elapsed_no, iter_no)
 
-        # ---- Run --------------------------------------------------------
-        engine = BacktestEngine(config)
-        logger.info("Starting bar-by-bar pipeline replay (%d bars)...", len(bars))
-        t0 = time.perf_counter()
-        result = await engine.run_full_pipeline({"BTCUSDT": bars}, verbose=True)
-        elapsed = time.perf_counter() - t0
+        # ── Comparison table ──────────────────────────────────────────────────
+        comparison = _build_comparison_table(r_ts, m_ts, r_no, m_no, date_range)
+        print("\n" + comparison)
+        _save_comparison_md(comparison)
 
-        meta = result.per_hypothesis.get("_meta", {})
-        return_pct = float(result.total_pnl_usd) / float(INITIAL_EQUITY) * 100
+        # Save only the no-ts detailed report (baseline already exported)
+        os.makedirs(os.path.dirname(REPORT_FILE), exist_ok=True)
+        with open(REPORT_FILE, "w", encoding="utf-8") as f:
+            f.write(report_no + "\n")
+        logger.info("Report (no-time-stop) saved → %s", REPORT_FILE)
 
-        logger.info(
-            "Iteration %d complete: trades=%d  WR=%.1f%%  PF=%.2f  "
-            "MaxDD=%.1f%%  Return=%.2f%%  (%.1fs)",
-            iteration + 1,
-            result.total_trades,
-            result.win_rate * 100,
-            result.profit_factor,
-            result.max_drawdown_pct * 100,
-            return_pct,
-            elapsed,
+    else:
+        # ── Normal single run ─────────────────────────────────────────────────
+        best_result, best_meta, best_elapsed, best_iter = await _run_iterations(
+            bars, config, disable_time_stop=False
         )
 
-        # Keep the best result (most trades, then highest PF)
-        if best_result is None or result.total_trades > best_result.total_trades:
-            best_result = result
-            best_meta   = meta
-            best_iter   = iteration
-            best_elapsed = elapsed
+        report = _build_report(bars, best_result, best_meta, best_elapsed, best_iter)
+        print("\n" + report)
 
-        if _gates_pass(result, meta):
-            logger.info("All target gates passed on iteration %d — stopping early.", iteration + 1)
-            break
+        os.makedirs(os.path.dirname(REPORT_FILE), exist_ok=True)
+        with open(REPORT_FILE, "w", encoding="utf-8") as f:
+            f.write(report + "\n")
+        logger.info("Report saved → %s", REPORT_FILE)
 
-        if iteration < MAX_ITERATIONS - 1:
-            logger.info(
-                "Gates not fully met (trades=%d, WR=%.1f%%, PF=%.2f) — "
-                "relaxing thresholds for iteration %d ...",
-                result.total_trades, result.win_rate * 100, result.profit_factor,
-                iteration + 2,
-            )
-
-    # ---- Build and print final report -----------------------------------
-    assert best_result is not None
-    report = _build_report(bars, best_result, best_meta, best_elapsed, best_iter)
-    print("\n" + report)
-
-    os.makedirs(os.path.dirname(REPORT_FILE), exist_ok=True)
-    with open(REPORT_FILE, "w", encoding="utf-8") as f:
-        f.write(report + "\n")
-    logger.info("Report saved → %s", REPORT_FILE)
-
-    # ---- Restore thresholds to defaults ---------------------------------
-    _reset_mdp_thresholds()
+        trade_records = best_meta.get("trade_records", [])
+        _export_trades_csv(trade_records, TRADES_CSV)
 
 
 if __name__ == "__main__":
-    _args = _parse_args()
+    _args  = _parse_args()
     _start = _parse_date_arg(_args.start, "start") if _args.start else None
     _end   = _parse_date_arg(_args.end,   "end")   if _args.end   else None
-    asyncio.run(run_backtest(start_dt=_start, end_dt=_end))
+    asyncio.run(run_backtest(
+        start_dt=_start,
+        end_dt=_end,
+        no_time_stop=_args.no_time_stop,
+    ))

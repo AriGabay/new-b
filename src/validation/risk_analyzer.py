@@ -57,7 +57,7 @@ class RiskRuleRunner:
     you provide a shared state to test exposure-based rules.
     """
 
-    def __init__(self, initial_equity: Decimal = Decimal("100000")) -> None:
+    def __init__(self, initial_equity: Decimal = Decimal("1000")) -> None:  # Capital: $1,000 with 10x leverage = $10,000 notional
         from core.events import EventBus
         self._initial_equity = initial_equity
         self._state = None

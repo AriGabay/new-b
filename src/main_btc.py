@@ -201,7 +201,7 @@ async def run_backtest_mode(args) -> None:
         symbol="BTCUSDT",
         start=getattr(args, "start", None),
         end=getattr(args, "end", None),
-        initial_equity=Decimal("10000"),
+        initial_equity=Decimal("1000"),  # Capital: $1,000 with 10x leverage = $10,000 notional
         risk_fraction=Decimal("0.01"),
     )
     engine = BacktestEngine(config)

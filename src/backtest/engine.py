@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -36,7 +36,8 @@ class BacktestConfig:
     timeframe:        str
     start_date:       datetime
     end_date:         datetime
-    initial_equity:   Decimal = Decimal("100000")
+    # Capital: $1,000 with 10x leverage = $10,000 notional
+    initial_equity:   Decimal = Decimal("1000")
     risk_fraction:    Decimal = Decimal("0.01")
     commission_pct:   Decimal = Decimal("0.001")    # 0.1% per side
     slippage_pct:     Decimal = Decimal("0.0005")   # 0.05% slippage assumption
@@ -363,6 +364,7 @@ class BacktestEngine:
         self,
         bars: dict[str, list[OHLCVBar]],
         verbose: bool = False,
+        disable_time_stop: bool = False,
     ) -> BacktestResult:
         """
         Full pipeline bar-by-bar backtest using BtcBybitPaperRunner in simulation mode.
@@ -394,20 +396,50 @@ class BacktestEngine:
 
         trade_records: list[dict] = []
         running_max_dd: float = 0.0
-        runner_ref: list = [None]   # mutable container for closure access
+        runner_ref: list = [None]       # mutable container for closure access
+        current_bar: list = [None]      # the OHLCVBar being replayed right now
+        entry_bar_times: dict = {}      # position_id → historical bar timestamp of entry
 
         async def _on_close(event: PositionCloseEvent) -> None:
             nonlocal running_max_dd
             sig = event.exit_signal
             pos = event.final_position
             if sig is not None and pos is not None:
+                _pnl_usd  = float(sig.pnl_usd)
+                _dir_raw  = getattr(pos.direction, "value", str(pos.direction))
+
+                # Use actual historical bar timestamps so the CSV timestamps align
+                # with the OHLCV data in the viewer (pos.opened_at / sig.timestamp
+                # are wall-clock simulation times, not historical bar times).
+                _exit_bar = current_bar[0]
+                _closed   = (_exit_bar.timestamp if _exit_bar is not None
+                             else sig.timestamp)
+                if _closed.tzinfo is None:
+                    _closed = _closed.replace(tzinfo=timezone.utc)
+
+                _entry_bar_ts = entry_bar_times.pop(pos.position_id, None)
+                _opened       = (_entry_bar_ts if _entry_bar_ts is not None
+                                 else pos.opened_at)
+                if _opened.tzinfo is None:
+                    _opened = _opened.replace(tzinfo=timezone.utc)
                 trade_records.append({
-                    "pnl_usd":    float(sig.pnl_usd),
-                    "pnl_r":      sig.pnl_r,
-                    "exit_reason": getattr(sig.exit_reason, "value", str(sig.exit_reason)),
-                    "bars_held":  sig.bars_held,
-                    "direction":  getattr(pos.direction, "value", str(pos.direction)),
-                    "symbol":     getattr(pos, "symbol", "unknown"),
+                    "trade_id":          pos.position_id,
+                    "direction":         _dir_raw.upper(),
+                    "opened_at":         _opened.isoformat(),
+                    "closed_at":         _closed.isoformat(),
+                    "entry_price":       float(pos.entry_price),
+                    "exit_price":        float(sig.exit_price),
+                    "stop_price":        float(pos.stop_price),
+                    "target_price":      float(pos.target_price),
+                    "pnl_usd":           _pnl_usd,
+                    "pnl_r":             sig.pnl_r,
+                    "exit_reason":       getattr(sig.exit_reason, "value", str(sig.exit_reason)),
+                    "bars_held":         sig.bars_held,
+                    "outcome":           "win" if _pnl_usd > 0 else ("loss" if _pnl_usd < 0 else "breakeven"),
+                    "composite_score":   getattr(pos, "composite_score", ""),
+                    "position_size_usd": float(pos.position_size_usd),
+                    "r_amount":          float(pos.r_amount),
+                    "symbol":            getattr(pos, "symbol", "unknown"),
                 })
                 if runner_ref[0] is not None:
                     dd = runner_ref[0]._state.portfolio.drawdown_pct
@@ -415,6 +447,18 @@ class BacktestEngine:
                         running_max_dd = dd
 
         bars_processed: int = 0
+
+        # ── Time-stop override ────────────────────────────────────────────────
+        # Patch module-level constants in ExitGroup before the runner starts.
+        # ExitGroup reads them at call time (not definition time), so this is safe.
+        # Always restore in finally — even when disable_time_stop=False so the
+        # saved originals act as a safety net against any concurrent mutation.
+        import groups.exit.group as _exit_grp
+        _orig_max_bars = _exit_grp.MAX_BARS_TO_HOLD
+        _orig_be_bars  = _exit_grp.BREAKEVEN_BARS
+        if disable_time_stop:
+            _exit_grp.MAX_BARS_TO_HOLD = 999_999   # effectively infinite time stop
+            _exit_grp.BREAKEVEN_BARS   = 999_999   # disable breakeven stop-move
 
         try:
             runner = BtcBybitPaperRunner(
@@ -459,8 +503,17 @@ class BacktestEngine:
                             await runner._state.reset_weekly_pnl()
                     prev_day = bar_day
 
+                    # Pin the current bar so _on_close() can read the actual
+                    # historical exit timestamp (fires inside simulate_bar).
+                    current_bar[0] = _bar
                     await runner.simulate_bar(fv)
                     bars_processed += 1
+
+                    # Record the entry bar timestamp for any position that just
+                    # opened during this simulate_bar call (before it can close).
+                    for _pid in runner._state.portfolio.open_positions:
+                        if _pid not in entry_bar_times:
+                            entry_bar_times[_pid] = _bar.timestamp
 
                     # Track max drawdown between trade events too
                     dd = runner._state.portfolio.drawdown_pct
@@ -522,6 +575,9 @@ class BacktestEngine:
             }
 
         finally:
+            # Restore exit-group time constants regardless of disable_time_stop flag
+            _exit_grp.MAX_BARS_TO_HOLD = _orig_max_bars
+            _exit_grp.BREAKEVEN_BARS   = _orig_be_bars
             if runner_ref[0] is not None:
                 await runner_ref[0].teardown()
             try:

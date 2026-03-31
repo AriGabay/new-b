@@ -8,7 +8,7 @@ Configuration hierarchy:
 
 Environment variables:
   MODE_GATE            — "research" | "shadow" | "live" (default: research)
-  INITIAL_EQUITY       — Decimal string (default: "100000")
+  INITIAL_EQUITY       — Decimal string (default: "1000")
   BINANCE_API_KEY      — optional for public endpoints
   BINANCE_API_SECRET   — optional for public endpoints
   JOURNAL_DB_PATH      — path to SQLite journal

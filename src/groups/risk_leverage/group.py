@@ -83,7 +83,8 @@ MAX_DRAWDOWN_HALT      = 0.40              # 40% drawdown halts system
 PUMP_VOLUME_RATIO      = 5.0               # 5× normal volume = pump signal
 
 # Leverage-driven sizing (perpetual futures model)
-MIN_LEVERAGE           = 5.0               # Minimum leverage for any approved trade
+# Capital: $1,000 with 10x leverage = $10,000 notional
+MIN_LEVERAGE           = 10.0              # Minimum leverage for any approved trade
 MAX_LEVERAGE           = 35.0              # Maximum leverage cap
 MAX_RISK_PER_TRADE     = 0.05              # 5% of equity max risk per trade (lowered for $1k equity)
 DEFAULT_MAX_BARS       = 72                # Time stop: 72 bars (3 days on 1h)
