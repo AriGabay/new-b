@@ -1,5 +1,5 @@
 """
-TraderEvaluatorPanel: runs all 21 trader evaluators against a BTCSetupPacket.
+TraderEvaluatorPanel: runs all 22 trader evaluators against a BTCSetupPacket.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from traders.evaluators import (
     MarketContextEvaluator,
     ExecutionQualityEvaluator,
     OrderFlowEvaluator,
+    MLSignalEvaluator,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,18 +61,21 @@ class PanelResult:
 
 class TraderEvaluatorPanel:
     """
-    Orchestrates all 21 trader evaluators.
+    Orchestrates all 22 trader evaluators.
 
-    Decision threshold: >= 15/21 approve AND avg_score >= 5.8 → "enter"
+    Decision threshold: >= 15/22 approve AND avg_score >= 5.8 → "enter"
     Regime-adaptive: bull/trending = 14, ranging/bear = 15
     Soft threshold: 10-13 approve → "hold"
     Hard reject: < 10 approve → "hold" (force no trade)
+
+    Evaluator #22 (MLSignalEvaluator) abstains until 100 labelled outcomes
+    are available in the learning DB, so the threshold is unaffected early on.
     """
 
-    APPROVE_THRESHOLD = 15   # default fallback (optimized in Phase 5)
+    APPROVE_THRESHOLD = 15   # default fallback
     MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
-    AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
-    _PANEL_SIZE = 21         # total number of evaluators
+    AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (test compatibility)
+    _PANEL_SIZE = 22         # total number of evaluators
     _REGIME_THRESHOLDS = {"bull": 14, "trending": 14, "ranging": 15, "bear": 15}
 
     def __init__(self) -> None:
@@ -97,7 +101,8 @@ class TraderEvaluatorPanel:
             WickAnalysisEvaluator(),
             MarketContextEvaluator(),
             ExecutionQualityEvaluator(),
-            OrderFlowEvaluator(),         # #21 — order flow / institutional signals
+            OrderFlowEvaluator(),    # #21 — order flow / institutional signals
+            MLSignalEvaluator(),     # #22 — LightGBM win-probability predictor
         ]
 
     @staticmethod

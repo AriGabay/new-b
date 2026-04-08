@@ -6,6 +6,7 @@ Every evaluator uses a distinct analytical lens.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
     from core.setup_packet import BTCSetupPacket
 
 from core.schemas import Direction
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1653,6 +1656,117 @@ class OrderFlowEvaluator(BaseTraderEvaluator):
 
 
 # ---------------------------------------------------------------------------
+# Evaluator #22 — ML Signal (LightGBM walk-forward classifier)
+# ---------------------------------------------------------------------------
+
+class MLSignalEvaluator(BaseTraderEvaluator):
+    """
+    LightGBM-based binary classifier predicting P(win) for each trade setup.
+
+    Reads the pre-trained BTCClassifier singleton. If the model is not yet
+    trained (< 100 labelled outcomes in the learning DB), the evaluator
+    abstains rather than voting randomly.
+
+    Scoring:
+      P(win) >= 0.65 → approve,  score = P(win) × 10  (e.g. 0.80 → 8.0)
+      P(win) <= 0.40 → reject,   score = P(win) × 10  (e.g. 0.25 → 2.5)
+      else           → abstain  (uncertain, let human traders decide)
+
+    The abstain band (0.40–0.65) is intentionally wide so the model only
+    votes when it has clear conviction — avoiding noise-injection into the panel.
+    """
+
+    trader_id = "MLSignal"
+
+    # Lazy singleton — loaded once at first evaluate() call per process
+    _classifier = None
+    _classifier_loaded = False
+
+    @classmethod
+    def _get_classifier(cls):
+        if not cls._classifier_loaded:
+            cls._classifier_loaded = True
+            try:
+                from ml.btc_classifier import BTCClassifier
+                cls._classifier = BTCClassifier()
+                if cls._classifier.is_trained:
+                    logger.info(
+                        "MLSignalEvaluator: loaded trained BTCClassifier "
+                        "(n=%d).", cls._classifier._n_training_samples
+                    )
+                else:
+                    logger.info(
+                        "MLSignalEvaluator: BTCClassifier not yet trained "
+                        "(need 100 labelled outcomes). Will abstain."
+                    )
+            except Exception as exc:
+                logger.warning("MLSignalEvaluator: could not load classifier: %s", exc)
+                cls._classifier = None
+        return cls._classifier
+
+    def evaluate(self, packet: "BTCSetupPacket") -> "TraderVerdict":
+        clf = self._get_classifier()
+
+        if clf is None or not clf.is_trained:
+            return self._make_verdict(
+                score=5.0, vote="abstain", confidence=0.0,
+                pro_reason="ML model not yet trained",
+                anti_reason="none",
+                exec_concern="none",
+                risk_concern="none",
+                explanation="MLSignalEvaluator: model not trained — abstaining.",
+            )
+
+        try:
+            from ml.feature_extractor import extract_features
+            features = extract_features(packet)
+            p_win = clf.predict_proba(features)
+        except Exception as exc:
+            logger.debug("MLSignalEvaluator: feature extraction failed: %s", exc)
+            return self._make_verdict(
+                score=5.0, vote="abstain", confidence=0.0,
+                pro_reason="feature extraction failed",
+                anti_reason="none",
+                exec_concern="none",
+                risk_concern="none",
+                explanation=f"MLSignalEvaluator: abstaining due to error: {exc}",
+            )
+
+        score = p_win * 10.0
+
+        if p_win >= 0.65:
+            vote = "approve"
+            confidence = min(1.0, (p_win - 0.50) * 4.0)
+            pro = f"ML model P(win)={p_win:.0%} — strong win probability"
+            anti = "none"
+            risk = "none"
+        elif p_win <= 0.40:
+            vote = "reject"
+            confidence = min(1.0, (0.50 - p_win) * 4.0)
+            pro = "none"
+            anti = f"ML model P(win)={p_win:.0%} — low win probability"
+            risk = f"ML predicts {1-p_win:.0%} chance of loss"
+        else:
+            vote = "abstain"
+            confidence = 0.0
+            pro = "none"
+            anti = "none"
+            risk = "none"
+
+        explanation = (
+            f"MLSignal: P(win)={p_win:.1%} → {vote} "
+            f"(score={score:.1f}, confidence={confidence:.2f})"
+        )
+        return self._make_verdict(
+            score=score, vote=vote, confidence=confidence,
+            pro_reason=pro, anti_reason=anti,
+            exec_concern="none", risk_concern=risk,
+            explanation=explanation,
+            metadata={"p_win": p_win, "n_training_samples": clf._n_training_samples},
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry — convenience tuple of all evaluator classes
 # ---------------------------------------------------------------------------
 
@@ -1677,5 +1791,6 @@ ALL_EVALUATOR_CLASSES = (
     WickAnalysisEvaluator,
     MarketContextEvaluator,
     ExecutionQualityEvaluator,
-    OrderFlowEvaluator,      # evaluator #21 — order flow / institutional signals
+    OrderFlowEvaluator,    # evaluator #21 — order flow / institutional signals
+    MLSignalEvaluator,     # evaluator #22 — LightGBM win-probability predictor
 )
