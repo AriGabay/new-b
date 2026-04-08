@@ -202,8 +202,8 @@ async def test_trader_evaluator_panel_actually_runs():
     )
     result = panel_calls[0]
     total_verdicts = result.approve_count + result.reject_count + result.abstain_count
-    assert total_verdicts == 20, (
-        f"Panel must run all 20 traders, got {total_verdicts} verdicts"
+    assert total_verdicts >= 20, (
+        f"Panel must run all 20+ traders, got {total_verdicts} verdicts"
     )
 
 
@@ -295,7 +295,7 @@ async def test_decision_trace_logger_writes_to_db():
     cur = conn.execute("SELECT COUNT(*) FROM trader_reviews")
     review_count = cur.fetchone()[0]
     assert review_count >= 20, (
-        f"Expected 20 trader_review rows (one per evaluator), got {review_count}"
+        f"Expected 20+ trader_review rows (one per evaluator), got {review_count}"
     )
 
     # Check panel_summaries table
@@ -476,21 +476,21 @@ async def test_panel_approved_reaches_risk():
 
 
 # ---------------------------------------------------------------------------
-# 10. All 20 trader evaluators are imported and instantiated
+# 10. All 22 trader evaluators are imported and instantiated
 # ---------------------------------------------------------------------------
 
 def test_all_20_traders_instantiated():
-    """TraderEvaluatorPanel instantiates exactly 20 evaluators."""
+    """TraderEvaluatorPanel instantiates all 22 evaluators (incl. OrderFlow #21, MLSignal #22)."""
     from traders.panel import TraderEvaluatorPanel
     panel = TraderEvaluatorPanel()
-    assert len(panel._evaluators) == 20, (
-        f"Expected 20 trader evaluators, found {len(panel._evaluators)}"
+    assert len(panel._evaluators) == 22, (
+        f"Expected 22 trader evaluators, found {len(panel._evaluators)}"
     )
     # All must have a trader_id
     ids = [getattr(e, "trader_id", None) for e in panel._evaluators]
     assert all(i is not None for i in ids), "All evaluators must have trader_id"
     # All must be unique
-    assert len(set(ids)) == 20, f"Duplicate trader IDs found: {[i for i in ids if ids.count(i) > 1]}"
+    assert len(set(ids)) == 22, f"Duplicate trader IDs found: {[i for i in ids if ids.count(i) > 1]}"
 
 
 # ---------------------------------------------------------------------------

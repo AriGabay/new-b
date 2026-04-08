@@ -193,16 +193,26 @@ class TestMDPPolicyRules:
         from mdp.policy import MDPPolicy
         self.policy = MDPPolicy()
 
-    def test_r0_reduce_risk_streak(self):
-        """R0: triggered by streak <= -8 (Phase 4: relaxed from -4)."""
+    def test_r0_reduce_risk_streak_no_longer_triggers(self):
+        """R0: streak alone no longer triggers REDUCE_RISK (removed in 3-tier DD).
+        A losing streak with low DD should fall through to a cautious entry."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(current_streak=-9, drawdown_pct=0.05)
+        action, reasoning = self.policy.decide(state)
+        # Streak alone doesn't block — should enter (small or medium depending on score)
+        assert action != MDPAction.REDUCE_RISK
+        assert reasoning["rule_number"] != 0
+
+    def test_r0_reduce_risk_dd_tier3(self):
+        """R0: triggered by drawdown > 35% (Tier 3 threshold)."""
+        from mdp.actions import MDPAction
+        state = _make_mdp_state(current_streak=0, drawdown_pct=0.36)
         action, reasoning = self.policy.decide(state)
         assert action == MDPAction.REDUCE_RISK
         assert reasoning["rule_number"] == 0
 
     def test_r0_reduce_risk_drawdown(self):
-        """R0: triggered by drawdown > 0.38 (Phase 4: relaxed from 0.25)."""
+        """R0: triggered by drawdown > 35% (Tier 3), well above threshold."""
         from mdp.actions import MDPAction
         state = _make_mdp_state(current_streak=0, drawdown_pct=0.40)
         action, reasoning = self.policy.decide(state)

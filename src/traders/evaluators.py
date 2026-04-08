@@ -1710,8 +1710,8 @@ class MLSignalEvaluator(BaseTraderEvaluator):
         if clf is None or not clf.is_trained:
             return self._make_verdict(
                 score=5.0, vote="abstain", confidence=0.0,
-                pro_reason="ML model not yet trained",
-                anti_reason="none",
+                pro="ML model not yet trained",
+                anti="none",
                 exec_concern="none",
                 risk_concern="none",
                 explanation="MLSignalEvaluator: model not trained — abstaining.",
@@ -1725,8 +1725,8 @@ class MLSignalEvaluator(BaseTraderEvaluator):
             logger.debug("MLSignalEvaluator: feature extraction failed: %s", exc)
             return self._make_verdict(
                 score=5.0, vote="abstain", confidence=0.0,
-                pro_reason="feature extraction failed",
-                anti_reason="none",
+                pro="feature extraction failed",
+                anti="none",
                 exec_concern="none",
                 risk_concern="none",
                 explanation=f"MLSignalEvaluator: abstaining due to error: {exc}",
@@ -1759,7 +1759,7 @@ class MLSignalEvaluator(BaseTraderEvaluator):
         )
         return self._make_verdict(
             score=score, vote=vote, confidence=confidence,
-            pro_reason=pro, anti_reason=anti,
+            pro=pro, anti=anti,
             exec_concern="none", risk_concern=risk,
             explanation=explanation,
             metadata={"p_win": p_win, "n_training_samples": clf._n_training_samples},

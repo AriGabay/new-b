@@ -221,7 +221,7 @@ class TestPhase64PanelResults:
         assert len(events) >= 1
         # Use the strongest event (max approve count) for the regression check
         evt = max(events, key=lambda e: e.panel_approve_count)
-        assert evt.panel_approve_count == 16, f"Expected 16/20 for best event, got {evt.panel_approve_count}/20"
+        assert evt.panel_approve_count == 17, f"Expected 17/22 for best event (OrderFlow #21 added), got {evt.panel_approve_count}/22"
 
     def test_v3_panel_avg_score_exceeds_7(self):
         from validation.fixtures.btc_structure_fixture import get_double_bottom_long_v1_fixture

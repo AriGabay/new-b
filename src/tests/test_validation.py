@@ -284,10 +284,10 @@ def test_panel_batch_runner_records_have_real_verdicts():
     records = runner.run_batch(packets)
     for rec in records:
         pr = rec.panel_result
-        # 20 traders must have voted
-        assert len(pr.verdicts) == 20
-        # approve_count must be in [0, 20]
-        assert 0 <= pr.approve_count <= 20
+        # 22 traders must have voted (incl. OrderFlow #21, MLSignal #22)
+        assert len(pr.verdicts) == 22
+        # approve_count must be in [0, 22]
+        assert 0 <= pr.approve_count <= 22
         # avg_score must be in [0, 10]
         assert 0.0 <= pr.avg_score <= 10.0
 

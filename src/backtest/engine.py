@@ -381,16 +381,18 @@ class BacktestEngine:
               bars_processed, trade_records, avg_winner_usd, avg_loser_usd.
         """
         import os
-        import tempfile
         from features.compute import FeatureComputer
         from core.events import PositionCloseEvent
         from runtime.runner import BtcBybitPaperRunner
 
         result = BacktestResult(config=self.config)
 
-        # Use a temporary journal DB so we don't pollute live data.
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-            db_path = tf.name
+        # Use config.output_db_path as the persistent journal/learning DB.
+        # Creating the directory here ensures the path is always ready.
+        # (The old temp-file approach discarded all learning data at the end.)
+        db_path = self.config.output_db_path
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        _db_is_temp = False  # never delete — caller owns the path
 
         trade_records: list[dict] = []
         running_max_dd: float = 0.0
@@ -538,10 +540,6 @@ class BacktestEngine:
         finally:
             if runner_ref[0] is not None:
                 await runner_ref[0].teardown()
-            try:
-                os.unlink(db_path)
-            except OSError:
-                pass
 
         logger.info(
             "BacktestEngine.run_full_pipeline: %d bars processed, %d trades, "
