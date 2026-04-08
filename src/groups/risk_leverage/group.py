@@ -469,10 +469,15 @@ class RiskLeverageGroup(BaseGroup):
 
         equity = self.state.portfolio.equity
 
-        # Place stop using ATR
+        # Place stop using ATR (with volatility-adaptive multiplier)
         atr14 = self.state.regime.atr14 if self.state.regime.atr14 > 0 else Decimal("1000")
+        # Derive ATR SMA20 from the stored ratio so the high-vol logic (3.0×) can fire
+        atr_vs_sma = self.state.regime.atr14_vs_sma20 or 1.0
+        atr_sma20 = Decimal(str(float(atr14) / atr_vs_sma)) if atr_vs_sma > 0 else None
         placer = ATRStopPlacer()
-        stop_price = placer.compute(proposal.entry_price, proposal.direction, atr14)
+        stop_price = placer.compute(
+            proposal.entry_price, proposal.direction, atr14, atr_sma20=atr_sma20
+        )
 
         # Compute target: 3× stop distance (3:1 R:R minimum)
         stop_dist = abs(proposal.entry_price - stop_price)
