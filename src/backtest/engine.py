@@ -407,6 +407,7 @@ class BacktestEngine:
                     "exit_reason": getattr(sig.exit_reason, "value", str(sig.exit_reason)),
                     "bars_held":  sig.bars_held,
                     "direction":  getattr(pos.direction, "value", str(pos.direction)),
+                    "symbol":     getattr(pos, "symbol", "BTCUSDT"),
                 })
                 if runner_ref[0] is not None:
                     dd = runner_ref[0]._state.portfolio.drawdown_pct
@@ -414,6 +415,19 @@ class BacktestEngine:
                         running_max_dd = dd
 
         bars_processed: int = 0
+
+        # Build chronologically-merged bar stream for multi-symbol support.
+        # Each element: (timestamp, symbol, bar_index_in_symbol_list)
+        merged_timeline: list[tuple] = []
+        for symbol, bar_list in bars.items():
+            for i, bar in enumerate(bar_list):
+                merged_timeline.append((bar.timestamp, symbol, i))
+        merged_timeline.sort(key=lambda x: x[0])
+
+        # Per-symbol sliding window buffers (avoid O(n²) growing-buffer cost)
+        symbol_buffers: dict[str, list] = {s: [] for s in bars}
+        symbol_prev_day: dict[str, Optional[datetime]] = {s: None for s in bars}
+        total_merged_bars = len(merged_timeline)
 
         try:
             runner = BtcBybitPaperRunner(
@@ -433,49 +447,50 @@ class BacktestEngine:
             # Subscribe to position-close events BEFORE processing bars
             await runner._bus.subscribe(PositionCloseEvent, _on_close)
 
-            for symbol, bar_list in bars.items():
-                computer = FeatureComputer()
-                total_symbol_bars = len(bar_list)
+            for ts, symbol, bar_idx in merged_timeline:
+                bar_list = bars[symbol]
+                _bar = bar_list[bar_idx]
+                buf = symbol_buffers[symbol]
 
-                prev_day = None  # Track day boundaries for PnL reset
+                # Maintain 200-bar rolling window per symbol
+                buf.append(_bar)
+                if len(buf) > 200:
+                    buf.pop(0)
 
-                for i, _bar in enumerate(bar_list):
-                    # Fixed 200-bar lookback window (avoids O(n²) growing-buffer cost)
-                    if i < 199:
-                        continue
-                    window = bar_list[i - 199: i + 1]   # exactly 200 bars
+                if len(buf) < 200:
+                    continue
 
-                    fv = computer.compute(window)
-                    if fv is None:
-                        continue
+                fv = FeatureComputer().compute(buf)
+                if fv is None:
+                    continue
 
-                    # Reset daily PnL at day boundaries (critical for daily loss limit)
-                    bar_day = _bar.timestamp.date()
-                    if prev_day is not None and bar_day != prev_day:
-                        await runner._state.reset_daily_pnl()
-                        # Also reset weekly PnL on Monday
-                        if bar_day.weekday() == 0:  # Monday
-                            await runner._state.reset_weekly_pnl()
-                    prev_day = bar_day
+                # Reset daily PnL at day boundaries (critical for daily loss limit)
+                bar_day = _bar.timestamp.date()
+                prev_day = symbol_prev_day[symbol]
+                if prev_day is not None and bar_day != prev_day:
+                    await runner._state.reset_daily_pnl()
+                    if bar_day.weekday() == 0:  # Monday → reset weekly PnL
+                        await runner._state.reset_weekly_pnl()
+                symbol_prev_day[symbol] = bar_day
 
-                    await runner.simulate_bar(fv)
-                    bars_processed += 1
+                await runner.simulate_bar(fv)
+                bars_processed += 1
 
-                    # Track max drawdown between trade events too
-                    dd = runner._state.portfolio.drawdown_pct
-                    if dd > running_max_dd:
-                        running_max_dd = dd
+                # Track max drawdown between trade events too
+                dd = runner._state.portfolio.drawdown_pct
+                if dd > running_max_dd:
+                    running_max_dd = dd
 
-                    if verbose and bars_processed % 500 == 0:
-                        port = runner._state.portfolio
-                        pct_done = (i + 1) / total_symbol_bars * 100
-                        logger.info(
-                            "  [%5.1f%%] bar %5d/%-5d | equity=$%8.0f | "
-                            "trades=%3d | DD=%.1f%%",
-                            pct_done, i + 1, total_symbol_bars,
-                            float(port.equity), len(trade_records),
-                            running_max_dd * 100,
-                        )
+                if verbose and bars_processed % 500 == 0:
+                    port = runner._state.portfolio
+                    pct_done = bars_processed / max(1, total_merged_bars) * 100
+                    logger.info(
+                        "  [%5.1f%%] bar %5d/%-5d | equity=$%8.0f | "
+                        "trades=%3d | DD=%.1f%%",
+                        pct_done, bars_processed, total_merged_bars,
+                        float(port.equity), len(trade_records),
+                        running_max_dd * 100,
+                    )
 
             # ------------------------------------------------------------------
             # Aggregate final metrics

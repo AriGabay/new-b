@@ -67,9 +67,13 @@ from core.schemas import OHLCVBar                                           # no
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-DATA_FILE   = os.path.join(
-    _PROJECT_ROOT, "analysis", "historical_eval", "data", "btcusdt_1h_2024_2025.csv"
-)
+_DATA_DIR = os.path.join(_PROJECT_ROOT, "analysis", "historical_eval", "data")
+
+DATA_FILES: dict[str, str] = {
+    "BTCUSDT": os.path.join(_DATA_DIR, "btcusdt_1h_2024_2025.csv"),
+    "ETHUSDT": os.path.join(_DATA_DIR, "ethusdt_1h_2024_2025.csv"),
+    "BNBUSDT": os.path.join(_DATA_DIR, "bnbusdt_1h_2024_2025.csv"),
+}
 REPORT_FILE = os.path.join(
     _PROJECT_ROOT, "analysis", "historical_eval", "report_v2.txt"
 )
@@ -77,7 +81,7 @@ REPORT_FILE = os.path.join(
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-INITIAL_EQUITY  = Decimal("10000")
+INITIAL_EQUITY  = Decimal("300")    # User override: $300 initial capital
 MAX_ITERATIONS  = 3
 
 # Target gates (all must pass for iteration to stop early)
@@ -104,35 +108,28 @@ V1_BASELINE: dict[str, Any] = {
 _THRESHOLD_SCHEDULES: list[dict[str, Any]] = [
     # iter 0 — production defaults (no change)
     {},
-    # iter 1 — relax REDUCE_RISK lock (primary bottleneck: 25% DD threshold too
-    #           tight for leveraged futures; fires after just 2 consecutive losses).
-    #           Also loosen medium entry bar slightly.
+    # iter 1 — lightly relax: raise Tier 3 DD block slightly, widen MED window
     {
-        # REDUCE_RISK MDP policy — raise DD threshold closer to the 40% halt floor.
-        # This is a tunable MDP policy parameter, NOT a safety rail.
-        # Hard safety rails (FinalDecisionGroup, RiskLeverageGroup, 40% halt) unchanged.
-        "REDUCE_MAX_DRAWDOWN": 0.35,    # was 0.25; still well below 40% halt threshold
-        "REDUCE_MAX_STREAK":   -6,      # was -4; allow more recovery attempts
-        # Entry quality
-        "MED_MIN_APPROVALS":   10,
+        # Raise DD_TIER3 from 35% → 38%: allows a few more entries during recovery
+        "DD_TIER3_THRESHOLD":  0.38,
+        "DD_TIER3_RECOVERY":   0.32,
+        # Allow ENTER_MEDIUM at slightly higher DD (25% → 30%)
+        "MED_MAX_DRAWDOWN":    0.30,
+        # Slightly relax entry quality bars
         "MED_MIN_AVG_SCORE":   5.5,
-        "SMALL_MIN_APPROVALS": 10,
         "SMALL_MIN_AVG_SCORE": 5.5,
-        "HC_MIN_APPROVALS":    13,
         "HC_MIN_AVG_SCORE":    6.5,
     },
-    # iter 2 — loosen further; REDUCE_RISK only fires near halt threshold
+    # iter 2 — loosen further; Tier 3 block is near the hard 40% safety rail
     {
-        "REDUCE_MAX_DRAWDOWN": 0.38,    # just below 40% halt — MDP policy only
-        "REDUCE_MAX_STREAK":   -8,
-        "MED_MIN_APPROVALS":   9,
+        "DD_TIER3_THRESHOLD":  0.40,    # MDP policy only; hard safety rails unchanged
+        "DD_TIER3_RECOVERY":   0.34,
+        "DD_TIER2_THRESHOLD":  0.32,    # bump Tier 2 cutover up slightly
+        "MED_MAX_DRAWDOWN":    0.35,
         "MED_MIN_AVG_SCORE":   5.2,
         "MED_MIN_RR":          1.5,
-        "SMALL_MIN_APPROVALS": 9,
         "SMALL_MIN_AVG_SCORE": 5.2,
-        "HC_MIN_APPROVALS":    12,
         "HC_MIN_AVG_SCORE":    6.0,
-        "DEFER_MIN_APPROVALS": 7,
         "DEFER_MIN_AVG_SCORE": 5.0,
     },
 ]
@@ -153,26 +150,24 @@ def _patch_mdp_thresholds(overrides: dict[str, Any]) -> None:
 def _reset_mdp_thresholds() -> None:
     """Restore mdp.policy constants to their source-code defaults."""
     import mdp.policy as _pol
-    _pol.HC_MIN_APPROVALS    = 14
     _pol.HC_MIN_AVG_SCORE    = 7.0
     _pol.HC_MAX_STD_DEV      = 1.5
     _pol.HC_MAX_DRAWDOWN     = 0.10
     _pol.HC_MIN_WIN_RATE     = 0.50
-    _pol.MED_MIN_APPROVALS   = 11
     _pol.MED_MIN_AVG_SCORE   = 5.8
     _pol.MED_MIN_RR          = 2.0
-    _pol.SMALL_MIN_APPROVALS = 11
+    _pol.MED_MAX_DRAWDOWN    = 0.25
     _pol.SMALL_MIN_AVG_SCORE = 5.8
-    _pol.DEFER_MIN_APPROVALS = 8
     _pol.DEFER_MIN_AVG_SCORE = 5.5
     _pol.DEFER_MIN_COMPOSITE = 0.65
     _pol.DEFER_MAX_STD_DEV   = 2.0
-    _pol.REDUCE_MAX_STREAK   = -4
-    _pol.REDUCE_MAX_DRAWDOWN = 0.25
+    _pol.DD_TIER2_THRESHOLD  = 0.25
+    _pol.DD_TIER3_THRESHOLD  = 0.35
+    _pol.DD_TIER3_RECOVERY   = 0.30
 
 
-def load_bars(csv_path: str) -> list[OHLCVBar]:
-    """Parse CSV file → list[OHLCVBar] (BTCUSDT, 1h, chronological)."""
+def load_bars(csv_path: str, symbol: str = "BTCUSDT") -> list[OHLCVBar]:
+    """Parse CSV file → list[OHLCVBar] (chronological)."""
     bars: list[OHLCVBar] = []
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -185,7 +180,7 @@ def load_bars(csv_path: str) -> list[OHLCVBar]:
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             bars.append(OHLCVBar(
-                symbol="BTCUSDT",
+                symbol=symbol,
                 timeframe="1h",
                 timestamp=ts,
                 open=Decimal(row["open"]),
@@ -196,6 +191,23 @@ def load_bars(csv_path: str) -> list[OHLCVBar]:
                 volume_usd=Decimal(row["volume_usd"]),
             ))
     return bars
+
+
+def load_all_symbols() -> dict[str, list[OHLCVBar]]:
+    """Load all available symbol CSV files. Returns only those that exist."""
+    all_bars: dict[str, list[OHLCVBar]] = {}
+    for symbol, path in DATA_FILES.items():
+        if os.path.exists(path):
+            bars = load_bars(path, symbol=symbol)
+            if bars:
+                all_bars[symbol] = bars
+                logger.info("Loaded %d bars for %s (%s → %s)",
+                    len(bars), symbol,
+                    bars[0].timestamp.strftime("%Y-%m-%d"),
+                    bars[-1].timestamp.strftime("%Y-%m-%d"))
+        else:
+            logger.warning("Data file not found, skipping %s: %s", symbol, path)
+    return all_bars
 
 
 def _gates_pass(result: BacktestResult, meta: dict) -> bool:
@@ -322,28 +334,29 @@ def _build_report(
 
 async def run_backtest() -> None:
     logger.info("=" * 64)
-    logger.info("  FULL PIPELINE BACKTEST  —  v2")
+    logger.info("  FULL PIPELINE BACKTEST  —  v2  (multi-symbol)")
     logger.info("=" * 64)
 
-    if not os.path.exists(DATA_FILE):
-        logger.error("Data file not found: %s", DATA_FILE)
+    all_bars = load_all_symbols()
+    if not all_bars:
+        logger.error("No data files found. Expected files in: %s", _DATA_DIR)
         sys.exit(1)
 
-    logger.info("Loading bars from %s ...", DATA_FILE)
-    bars = load_bars(DATA_FILE)
+    # Use BTC dates for config bounds; all symbols should cover the same period
+    btc_bars = all_bars.get("BTCUSDT", next(iter(all_bars.values())))
+    total_bars = sum(len(b) for b in all_bars.values())
     logger.info(
-        "Loaded %d bars  |  %s → %s  (%.1f months)",
-        len(bars),
-        bars[0].timestamp.strftime("%Y-%m-%d"),
-        bars[-1].timestamp.strftime("%Y-%m-%d"),
-        len(bars) / 720,
+        "Loaded %d total bars across %d symbols  |  %s → %s",
+        total_bars, len(all_bars),
+        btc_bars[0].timestamp.strftime("%Y-%m-%d"),
+        btc_bars[-1].timestamp.strftime("%Y-%m-%d"),
     )
 
     config = BacktestConfig(
-        symbols        = ["BTCUSDT"],
+        symbols        = list(all_bars.keys()),
         timeframe      = "1h",
-        start_date     = bars[0].timestamp,
-        end_date       = bars[-1].timestamp,
+        start_date     = btc_bars[0].timestamp,
+        end_date       = btc_bars[-1].timestamp,
         initial_equity = INITIAL_EQUITY,
         enforce_holdout= False,
         output_db_path = "data/backtest_journal.db",
@@ -365,9 +378,10 @@ async def run_backtest() -> None:
 
         # ---- Run --------------------------------------------------------
         engine = BacktestEngine(config)
-        logger.info("Starting bar-by-bar pipeline replay (%d bars)...", len(bars))
+        logger.info("Starting bar-by-bar pipeline replay (%d total bars across %d symbols)...",
+                    total_bars, len(all_bars))
         t0 = time.perf_counter()
-        result = await engine.run_full_pipeline({"BTCUSDT": bars}, verbose=True)
+        result = await engine.run_full_pipeline(all_bars, verbose=True)
         elapsed = time.perf_counter() - t0
 
         meta = result.per_hypothesis.get("_meta", {})
@@ -406,7 +420,7 @@ async def run_backtest() -> None:
 
     # ---- Build and print final report -----------------------------------
     assert best_result is not None
-    report = _build_report(bars, best_result, best_meta, best_elapsed, best_iter)
+    report = _build_report(btc_bars, best_result, best_meta, best_elapsed, best_iter)
     print("\n" + report)
 
     os.makedirs(os.path.dirname(REPORT_FILE), exist_ok=True)

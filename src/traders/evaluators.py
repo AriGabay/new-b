@@ -1512,6 +1512,147 @@ class ExecutionQualityEvaluator(BaseTraderEvaluator):
 
 
 # ---------------------------------------------------------------------------
+# Evaluator 21: OrderFlowEvaluator
+# ---------------------------------------------------------------------------
+
+class OrderFlowEvaluator(BaseTraderEvaluator):
+    """
+    Evaluates order flow and institutional activity signals.
+
+    Uses volume surge, price momentum convergence, and EMA proximity
+    (as a VWAP proxy) to gauge smart money participation.
+
+    Key signals:
+    1. Volume character: surge (>2×) = institutional conviction
+    2. Volume at structure: surge at S/R = strong institutional confirmation
+    3. EMA20 proximity: entry within 0.5% of EMA20 = institutional anchor
+    4. Price momentum: consecutive directional closes = momentum alignment
+    5. Volume/ADX divergence: high volume + low ADX = possible distribution
+    """
+    trader_id = "OrderFlow"
+
+    def evaluate(self, packet: "BTCSetupPacket") -> TraderVerdict:
+        direction = self._direction_str(packet)
+        indicators = packet.indicators
+        structure = packet.structure
+
+        score = 5.0
+        notes: list[str] = []
+
+        # ----------------------------------------------------------------
+        # 1. Volume character (institutional participation proxy)
+        # ----------------------------------------------------------------
+        vol_char = indicators.volume_character   # "surge" | "above_avg" | "normal" | "below_avg"
+        vol_ratio = indicators.volume_ratio
+
+        if vol_char == "surge":
+            score += 2.5
+            notes.append(f"volume surge {vol_ratio:.1f}x — institutional conviction")
+        elif vol_char == "above_avg":
+            score += 1.0
+            notes.append(f"above-average volume {vol_ratio:.1f}x")
+        elif vol_char == "below_avg":
+            score -= 2.0
+            notes.append(f"low volume {vol_ratio:.1f}x — weak conviction")
+
+        # ----------------------------------------------------------------
+        # 2. Volume at structure (smart money S/R interaction)
+        # ----------------------------------------------------------------
+        if vol_char in ("surge", "above_avg"):
+            if direction == "long" and structure.at_support:
+                score += 2.0
+                notes.append("volume surge at support — smart money buying")
+            elif direction == "short" and structure.at_resistance:
+                score += 2.0
+                notes.append("volume surge at resistance — smart money selling")
+            elif direction == "long" and structure.at_resistance:
+                score -= 1.5
+                notes.append("volume at resistance — selling pressure against long")
+            elif direction == "short" and structure.at_support:
+                score -= 1.5
+                notes.append("volume at support — buying pressure against short")
+
+        # ----------------------------------------------------------------
+        # 3. EMA20 proximity (VWAP proxy — institutional reference anchor)
+        # ----------------------------------------------------------------
+        close = float(indicators.close)
+        ema20 = float(indicators.ema20)
+        if ema20 > 0:
+            ema20_dist_pct = abs(close - ema20) / ema20 * 100
+            if ema20_dist_pct <= 0.5:
+                score += 1.5
+                notes.append(f"entry within 0.5% of EMA20 — clean institutional level")
+            elif ema20_dist_pct <= 1.5:
+                score += 0.5
+                notes.append(f"near EMA20 ({ema20_dist_pct:.1f}%)")
+            elif ema20_dist_pct > 4.0:
+                score -= 1.0
+                notes.append(f"far from EMA20 ({ema20_dist_pct:.1f}%) — extended entry")
+
+        # ----------------------------------------------------------------
+        # 4. Price momentum from recent closes (5-bar directional consistency)
+        # ----------------------------------------------------------------
+        if len(packet.recent_closes) >= 5:
+            recent = [float(c) for c in packet.recent_closes[-5:]]
+            up_bars = sum(1 for i in range(1, len(recent)) if recent[i] > recent[i - 1])
+            if direction == "long":
+                if up_bars >= 3:
+                    score += 1.0
+                    notes.append(f"price momentum: {up_bars}/4 bars rising")
+                elif up_bars <= 1:
+                    score -= 1.5
+                    notes.append("price momentum opposing long direction")
+            else:  # short
+                down_bars = 4 - up_bars
+                if down_bars >= 3:
+                    score += 1.0
+                    notes.append(f"price momentum: {down_bars}/4 bars falling")
+                elif down_bars <= 1:
+                    score -= 1.5
+                    notes.append("price momentum opposing short direction")
+
+        # ----------------------------------------------------------------
+        # 5. Volume/ADX divergence (distribution/accumulation warning)
+        # ----------------------------------------------------------------
+        if vol_char == "surge" and indicators.adx14 < 20:
+            score -= 1.0
+            notes.append(f"volume surge in low-ADX range (ADX={indicators.adx14:.0f}) — possible distribution")
+
+        # ----------------------------------------------------------------
+        # Verdict
+        # ----------------------------------------------------------------
+        vote = self._vote_from_score(score)
+        confidence = min(0.85, 0.4 + (score - 5.0) * 0.07)
+
+        pro = (
+            f"Order flow ({direction.upper()}): "
+            f"{'; '.join(notes[:2]) if notes else 'neutral volume participation'}."
+        )
+        anti = (
+            "Volume signals can be misleading; surges may indicate distribution "
+            "rather than accumulation in ranging markets."
+        )
+        exec_concern = "low volume may widen spreads at fill" if vol_char == "below_avg" else "none"
+        risk_concern = "counter-trend institutional flow detected" if score < 4.0 else "none"
+        explanation = (
+            f"Order flow evaluation ({direction.upper()}): "
+            f"{'; '.join(notes) if notes else 'no exceptional volume signals'}. "
+            f"Volume ratio {vol_ratio:.1f}x, ADX {indicators.adx14:.0f}. "
+            f"Score {score:.1f} reflects institutional participation quality."
+        )
+        meta = {
+            "volume_ratio": vol_ratio,
+            "volume_character": vol_char,
+            "at_support": structure.at_support,
+            "at_resistance": structure.at_resistance,
+        }
+        return self._make_verdict(
+            score, vote, confidence, pro, anti, exec_concern, risk_concern, explanation,
+            metadata=meta,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry — convenience tuple of all evaluator classes
 # ---------------------------------------------------------------------------
 
@@ -1536,4 +1677,5 @@ ALL_EVALUATOR_CLASSES = (
     WickAnalysisEvaluator,
     MarketContextEvaluator,
     ExecutionQualityEvaluator,
+    OrderFlowEvaluator,      # evaluator #21 — order flow / institutional signals
 )

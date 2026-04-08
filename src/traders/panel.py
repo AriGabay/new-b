@@ -1,9 +1,10 @@
 """
-TraderEvaluatorPanel: runs all 20 trader evaluators against a BTCSetupPacket.
+TraderEvaluatorPanel: runs all 21 trader evaluators against a BTCSetupPacket.
 """
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -30,6 +31,7 @@ from traders.evaluators import (
     WickAnalysisEvaluator,
     MarketContextEvaluator,
     ExecutionQualityEvaluator,
+    OrderFlowEvaluator,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,19 +60,22 @@ class PanelResult:
 
 class TraderEvaluatorPanel:
     """
-    Orchestrates all 20 trader evaluators.
+    Orchestrates all 21 trader evaluators.
 
-    Decision threshold: >= 11/20 approve AND avg_score >= 5.8 → "enter"
-    Soft threshold: 8-10 approve → "hold"
-    Hard reject: < 8 approve → "hold" (force no trade)
+    Decision threshold: >= 15/21 approve AND avg_score >= 5.8 → "enter"
+    Regime-adaptive: bull/trending = 14, ranging/bear = 15
+    Soft threshold: 10-13 approve → "hold"
+    Hard reject: < 10 approve → "hold" (force no trade)
     """
 
     APPROVE_THRESHOLD = 15   # default fallback (optimized in Phase 5)
     MIN_AVG_SCORE = 5.8      # need avg score >= 5.8
     AVG_SCORE_THRESHOLD = 5.8  # alias for MIN_AVG_SCORE (Phase 6.4 test compatibility)
+    _PANEL_SIZE = 21         # total number of evaluators
     _REGIME_THRESHOLDS = {"bull": 14, "trending": 14, "ranging": 15, "bear": 15}
 
     def __init__(self) -> None:
+        self._weights: dict[str, float] = self._load_weights()
         self._evaluators = [
             TrendFollowingEvaluator(),
             MomentumEvaluator(),
@@ -92,10 +97,35 @@ class TraderEvaluatorPanel:
             WickAnalysisEvaluator(),
             MarketContextEvaluator(),
             ExecutionQualityEvaluator(),
+            OrderFlowEvaluator(),         # #21 — order flow / institutional signals
         ]
 
+    @staticmethod
+    def _load_weights() -> dict[str, float]:
+        """
+        Load evaluator weights from data/evaluator_weights.json.
+        Returns empty dict if file doesn't exist (fallback: equal weighting).
+        Called once at panel construction.
+        """
+        try:
+            from learning.weight_updater import EvaluatorWeightUpdater
+            updater = EvaluatorWeightUpdater()
+            weights = updater.load_weights()
+            if weights:
+                logger.info(
+                    "TraderEvaluatorPanel: loaded %d evaluator weights from JSON.", len(weights)
+                )
+            return weights
+        except Exception as exc:
+            logger.debug("TraderEvaluatorPanel: could not load weights: %s", exc)
+            return {}
+
+    def reload_weights(self) -> None:
+        """Reload evaluator weights from disk (call after learn_and_test.py runs)."""
+        self._weights = self._load_weights()
+
     def evaluate(self, packet: BTCSetupPacket) -> PanelResult:
-        """Run all 20 evaluators and aggregate results."""
+        """Run all 21 evaluators and aggregate results with Sharpe-based weighting."""
         result = PanelResult(packet_id=packet.packet_id)
 
         for evaluator in self._evaluators:
@@ -114,12 +144,17 @@ class TraderEvaluatorPanel:
         if result.verdicts:
             result.avg_score = sum(v.score for v in result.verdicts) / len(result.verdicts)
 
-            # Weighted score by confidence
-            total_confidence = sum(v.confidence for v in result.verdicts)
-            if total_confidence > 0:
-                result.weighted_score = (
-                    sum(v.score * v.confidence for v in result.verdicts) / total_confidence
-                )
+            # Weighted score: confidence × Sharpe-weight (learned) per evaluator
+            # Falls back to confidence-only weighting when no weights loaded
+            total_weight = 0.0
+            weighted_sum = 0.0
+            for v in result.verdicts:
+                sharpe_weight = self._weights.get(v.trader_id, 1.0)
+                w = v.confidence * sharpe_weight
+                weighted_sum += v.score * w
+                total_weight += w
+            if total_weight > 0:
+                result.weighted_score = weighted_sum / total_weight
 
             # Collect key risks (from rejecters) and strengths (from approvers)
             result.key_risks = [
@@ -137,21 +172,23 @@ class TraderEvaluatorPanel:
         regime_str = getattr(getattr(packet, "regime", None), "btc_macro", "ranging")
         approve_threshold = self._REGIME_THRESHOLDS.get(regime_str, self.APPROVE_THRESHOLD)
         logger.info("Panel threshold: %d (regime=%s)", approve_threshold, regime_str)
+        n_evaluators = len(self._evaluators)
         if (
             result.approve_count >= approve_threshold
             and result.avg_score >= self.MIN_AVG_SCORE
         ):
             result.panel_recommendation = "enter"
-            result.panel_confidence = result.approve_count / 20.0
+            result.panel_confidence = result.approve_count / n_evaluators
         elif result.approve_count >= 10:
             result.panel_recommendation = "hold"
-            result.panel_confidence = result.approve_count / 20.0
+            result.panel_confidence = result.approve_count / n_evaluators
         else:
             result.panel_recommendation = "hold"
-            result.panel_confidence = result.reject_count / 20.0
+            result.panel_confidence = result.reject_count / n_evaluators
 
         logger.info(
-            "Panel: %d approve, %d reject, %d abstain | avg=%.1f | → %s",
+            "Panel (%d evaluators): %d approve, %d reject, %d abstain | avg=%.1f | → %s",
+            n_evaluators,
             result.approve_count,
             result.reject_count,
             result.abstain_count,

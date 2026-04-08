@@ -262,8 +262,8 @@ class FinalDecisionGroup:
                 )
             elif action == MDPAction.REDUCE_RISK:
                 decision.hold_rationale = (
-                    f"MDP REDUCE_RISK: streak={mdp_state.current_streak} "
-                    f"drawdown={mdp_state.drawdown_pct:.1%}"
+                    f"MDP REDUCE_RISK (Tier 3): drawdown={mdp_state.drawdown_pct:.1%} "
+                    f"exceeds 35% — blocking entries until DD < 30%"
                 )
             else:
                 decision.hold_rationale = (

@@ -45,7 +45,9 @@ class RiskConfig:
     max_portfolio_exposure: Decimal = Decimal("0.25")
     max_cluster_exposure:  Decimal = Decimal("0.15")
     daily_loss_limit:      float   = -0.20   # Leveraged: 1-2 losing trades/day
-    max_drawdown_halt:     float   = 0.40   # Leveraged: halt at 40% to prevent ruin
+    max_drawdown_halt:     float   = 0.35   # Tier 3: block entries at 35% DD
+    drawdown_tier2:        float   = 0.25   # Tier 2: 25% position size at 25% DD
+    drawdown_tier3_recovery: float = 0.30  # Resume trading when DD drops below 30%
     max_leverage:          float   = 35.0  # Leveraged perpetual futures: 5×–35×
     atr_stop_multiplier:   Decimal = Decimal("2.0")
 
@@ -79,7 +81,7 @@ class BacktestConfig:
 class SystemConfig:
     """Top-level config object passed into every group at startup."""
     mode:          ModeGate        = ModeGate.RESEARCH
-    initial_equity: Decimal        = Decimal("1000")
+    initial_equity: Decimal        = Decimal("300")
     market_data:   MarketDataConfig = field(default_factory=MarketDataConfig)
     risk:          RiskConfig       = field(default_factory=RiskConfig)
     entry:         EntryConfig      = field(default_factory=EntryConfig)

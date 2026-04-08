@@ -328,6 +328,34 @@ class EntryGroup(BaseGroup):
             return
 
         # ------------------------------------------------------------------
+        # 5c. EMA alignment MTF filter (4H trend proxy)
+        # Extracts ema_alignment from indicators bundle metadata (set by
+        # IndicatorsGroup._build_bundle). Uses full_bull/full_bear as a
+        # higher-timeframe trend direction filter — prevents trading against
+        # the major trend even when the regime isn't classified as full bear/bull.
+        # Block LONGs in full_bear (EMA20 < EMA50 < EMA200 — strong downtrend)
+        # Block SHORTs in full_bull (EMA20 > EMA50 > EMA200 — strong uptrend)
+        # ------------------------------------------------------------------
+        ema_alignment = "mixed"
+        for b in bundles.values():
+            ea = b.metadata.get("ema_alignment") if b.metadata else None
+            if ea:
+                ema_alignment = ea
+                break
+
+        if direction == Direction.LONG and ema_alignment == "full_bear":
+            logger.info(
+                "EntryGroup: LONG blocked by full_bear EMA alignment for %s", symbol
+            )
+            return
+
+        if direction == Direction.SHORT and ema_alignment == "full_bull":
+            logger.info(
+                "EntryGroup: SHORT blocked by full_bull EMA alignment for %s", symbol
+            )
+            return
+
+        # ------------------------------------------------------------------
         # 6. Historian query (before composite score so result feeds into it)
         # ------------------------------------------------------------------
         historian_analog: Optional[HistoricalAnalog] = None

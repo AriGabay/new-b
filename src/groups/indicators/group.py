@@ -180,12 +180,25 @@ class IndicatorsGroup(BaseGroup):
         signals = self._score_signals(signals, fv)
 
         # 7. Build and publish bundle
+        # Compute EMA alignment for MTF filter (passed to bundle metadata)
+        if fv.ema20 > fv.ema50 > fv.ema200:
+            _ema_alignment = "full_bull"
+        elif fv.ema20 < fv.ema50 < fv.ema200:
+            _ema_alignment = "full_bear"
+        elif fv.ema20 > fv.ema50:
+            _ema_alignment = "partial_bull"
+        elif fv.ema20 < fv.ema50:
+            _ema_alignment = "partial_bear"
+        else:
+            _ema_alignment = "mixed"
+
         bundle = self._build_bundle(
             symbol=fv.symbol,
             timeframe=fv.timeframe,
             timestamp=fv.timestamp,
             signals=signals,
             regime=regime,
+            ema_alignment=_ema_alignment,
         )
 
         await self.bus.publish(
@@ -1143,6 +1156,7 @@ class IndicatorsGroup(BaseGroup):
         timestamp: datetime,
         signals: list[IndicatorSignal],
         regime: RegimeContext,
+        ema_alignment: str = "mixed",
     ) -> GroupSignalBundle:
         """Assemble GroupSignalBundle from all processed signals and regime."""
         return GroupSignalBundle(
@@ -1156,5 +1170,6 @@ class IndicatorsGroup(BaseGroup):
             metadata={
                 "signal_count": len(signals),
                 "directions": list({s.direction.value for s in signals}),
+                "ema_alignment": ema_alignment,
             },
         )

@@ -15,17 +15,19 @@ from enum import Enum
 
 
 class MDPAction(Enum):
-    NO_TRADE             = "no_trade"
-    ENTER_SMALL          = "enter_small"    # 50% of normal size
-    ENTER_MEDIUM         = "enter_medium"   # 100% of normal size
-    ENTER_HIGH_CONVICTION = "enter_high"   # 150% of normal size
-    DEFER                = "defer"          # skip this bar, re-evaluate next
-    REDUCE_RISK          = "reduce_risk"    # close/reduce existing positions
+    NO_TRADE              = "no_trade"
+    ENTER_MICRO           = "enter_micro"   # 25% of normal size (severe DD recovery)
+    ENTER_SMALL           = "enter_small"   # 50% of normal size
+    ENTER_MEDIUM          = "enter_medium"  # 100% of normal size
+    ENTER_HIGH_CONVICTION = "enter_high"    # 150% of normal size
+    DEFER                 = "defer"         # skip this bar, re-evaluate next
+    REDUCE_RISK           = "reduce_risk"   # block new entries until DD recovers
 
 
 # Maps action → position size multiplier (relative to base R sizing)
 ACTION_SIZE_MULTIPLIERS: dict[MDPAction, float] = {
     MDPAction.NO_TRADE:              0.0,
+    MDPAction.ENTER_MICRO:           0.25,
     MDPAction.ENTER_SMALL:           0.5,
     MDPAction.ENTER_MEDIUM:          1.0,
     MDPAction.ENTER_HIGH_CONVICTION: 1.5,
@@ -35,6 +37,7 @@ ACTION_SIZE_MULTIPLIERS: dict[MDPAction, float] = {
 
 # Actions that result in entering a trade
 ENTER_ACTIONS = frozenset([
+    MDPAction.ENTER_MICRO,
     MDPAction.ENTER_SMALL,
     MDPAction.ENTER_MEDIUM,
     MDPAction.ENTER_HIGH_CONVICTION,

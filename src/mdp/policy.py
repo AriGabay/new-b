@@ -45,6 +45,7 @@ HC_MIN_WIN_RATE     = 0.50
 
 MED_MIN_AVG_SCORE   = 5.8
 MED_MIN_RR          = 2.0
+MED_MAX_DRAWDOWN    = 0.25   # Don't use full size above 25% DD
 
 SMALL_MIN_AVG_SCORE = 5.8
 
@@ -52,10 +53,14 @@ DEFER_MIN_AVG_SCORE = 5.5
 DEFER_MIN_COMPOSITE = 0.65
 DEFER_MAX_STD_DEV   = 2.0
 
-# Phase 4: relaxed from -4/0.25 to prevent premature trade blocking
-# With 56% WR, 8 consecutive losses has only 0.15% probability
-REDUCE_MAX_STREAK   = -8
-REDUCE_MAX_DRAWDOWN = 0.38
+# 3-tier drawdown management (replaces flat 40% halt)
+# Tier 1: DD > 10%  → ENTER_SMALL (0.5×)  — handled by risk_factor_triggered in R3
+# Tier 2: DD > 25%  → ENTER_MICRO (0.25×) — severe caution
+# Tier 3: DD > 35%  → REDUCE_RISK          — capital preservation, no new entries
+#         Recovery: resume when DD drops below 30%
+DD_TIER2_THRESHOLD  = 0.25
+DD_TIER3_THRESHOLD  = 0.35
+DD_TIER3_RECOVERY   = 0.30
 
 
 class MDPPolicy:
@@ -108,23 +113,25 @@ class MDPPolicy:
         )
 
         # ------------------------------------------------------------------
-        # R0: Portfolio protection — always evaluated first
+        # R0: Portfolio protection — 3-tier drawdown management
+        # Tier 3 (DD > 35%): block all new entries until DD recovers to 30%
+        # Tier 2 (DD > 25%): 25% size — handled below after consensus checks
+        # Tier 1 (DD > 10%): 50% size — handled by R3 risk_factor_triggered
         # ------------------------------------------------------------------
-        if state.current_streak <= REDUCE_MAX_STREAK or state.drawdown_pct > REDUCE_MAX_DRAWDOWN:
+        if state.drawdown_pct > DD_TIER3_THRESHOLD:
             reasoning = {
                 "rule_fired": "REDUCE_RISK",
                 "rule_number": 0,
                 "factors": {
-                    "current_streak": state.current_streak,
                     "drawdown_pct": state.drawdown_pct,
-                    "reduce_max_streak": REDUCE_MAX_STREAK,
-                    "reduce_max_drawdown": REDUCE_MAX_DRAWDOWN,
+                    "dd_tier3_threshold": DD_TIER3_THRESHOLD,
+                    "recovery_target": DD_TIER3_RECOVERY,
                 },
                 "size_multiplier": 0.0,
             }
             logger.debug(
-                "MDPPolicy R0 REDUCE_RISK: streak=%d drawdown=%.1f%%",
-                state.current_streak, state.drawdown_pct * 100,
+                "MDPPolicy R0 REDUCE_RISK (Tier 3): drawdown=%.1f%% > %.0f%%",
+                state.drawdown_pct * 100, DD_TIER3_THRESHOLD * 100,
             )
             return MDPAction.REDUCE_RISK, reasoning
 
@@ -157,12 +164,14 @@ class MDPPolicy:
             return MDPAction.ENTER_HIGH_CONVICTION, reasoning
 
         # ------------------------------------------------------------------
-        # R2: Standard entry — qualifying consensus + adequate R:R
+        # R2: Standard entry — qualifying consensus + adequate R:R + healthy DD
+        # Only fires at full size when DD < 25%; above that, falls to R3/R3a
         # ------------------------------------------------------------------
         if (
             state.approve_count >= rt["med_min_approvals"]
             and state.avg_score >= MED_MIN_AVG_SCORE
             and state.r_r_ratio >= MED_MIN_RR
+            and state.drawdown_pct < MED_MAX_DRAWDOWN
         ):
             reasoning = {
                 "rule_fired": "ENTER_MEDIUM",
@@ -182,6 +191,8 @@ class MDPPolicy:
 
         # ------------------------------------------------------------------
         # R3: Cautious entry — qualifying consensus but risk factors present
+        # R3a (Tier 2 DD): 25% size when DD 25-35%
+        # R3b (Tier 1 DD): 50% size when DD 10-25% or streak/vol issues
         # ------------------------------------------------------------------
         risk_factor_triggered = (
             state.drawdown_pct > 0.10
@@ -201,6 +212,26 @@ class MDPPolicy:
             if state.volatility_regime == "high":
                 triggered.append("high_volatility")
 
+            # Tier 2: DD > 25% → quarter size
+            if state.drawdown_pct > DD_TIER2_THRESHOLD:
+                reasoning = {
+                    "rule_fired": "ENTER_MICRO",
+                    "rule_number": 3,
+                    "factors": {
+                        "approve_count": state.approve_count,
+                        "avg_score": state.avg_score,
+                        "risk_factors_triggered": triggered,
+                        "dd_tier": "tier2_25pct",
+                    },
+                    "size_multiplier": 0.25,
+                }
+                logger.debug(
+                    "MDPPolicy R3a ENTER_MICRO (Tier 2): approve=%d avg=%.1f dd=%.1f%%",
+                    state.approve_count, state.avg_score, state.drawdown_pct * 100,
+                )
+                return MDPAction.ENTER_MICRO, reasoning
+
+            # Tier 1: DD 10-25% or other risk factors → half size
             reasoning = {
                 "rule_fired": "ENTER_SMALL",
                 "rule_number": 3,
@@ -212,7 +243,7 @@ class MDPPolicy:
                 "size_multiplier": 0.5,
             }
             logger.debug(
-                "MDPPolicy R3 ENTER_SMALL: approve=%d avg=%.1f risk=%s",
+                "MDPPolicy R3b ENTER_SMALL (Tier 1): approve=%d avg=%.1f risk=%s",
                 state.approve_count, state.avg_score, triggered,
             )
             return MDPAction.ENTER_SMALL, reasoning
